@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
@@ -217,11 +218,13 @@ func ResolveServerDir(configured string) (string, error) {
 			filepath.Join(dir, "..", "..", "server"), // a Go build in client/bin
 		)
 	}
+	// Walk up from the working directory so `go run ./cmd/...` finds the
+	// checkout's server no matter which subdirectory it was started from.
 	if working, err := os.Getwd(); err == nil {
-		candidates = append(candidates,
-			filepath.Join(working, "server"),
-			filepath.Join(working, "..", "server"),
-		)
+		for depth := range 5 {
+			candidates = append(candidates,
+				filepath.Join(working, strings.Repeat(".."+string(filepath.Separator), depth), "server"))
+		}
 	}
 
 	var tried []string
