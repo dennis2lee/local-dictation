@@ -34,9 +34,15 @@ func newMainTab(app *App) *mainTab {
 	tab.detail = widget.NewLabel("Ready to start with the global shortcut.")
 	tab.detail.Wrapping = fyne.TextWrapWord
 
-	tab.language = widget.NewRadioGroup([]string{"Korean", "English"}, tab.onLanguageChanged)
+	// The handler is attached after the initial value, not with it. SetSelected
+	// fires OnChanged, and firing it here would run onLanguageChanged — which
+	// calls ApplySettings, which calls back into a mainTab that this line has
+	// not finished building and that App.mainTab does not point at yet. That is
+	// a nil dereference before the window ever appears.
+	tab.language = widget.NewRadioGroup([]string{"Korean", "English"}, nil)
 	tab.language.Horizontal = true
 	tab.language.SetSelected(languageLabel(settings.Language))
+	tab.language.OnChanged = tab.onLanguageChanged
 
 	tab.shortcut = widget.NewLabel(settings.Hotkey.String())
 	tab.shortcut.TextStyle = fyne.TextStyle{Bold: true, Monospace: true}

@@ -101,8 +101,10 @@ func (s *settingsTab) content() fyne.CanvasObject {
 // -- servers ---------------------------------------------------------------
 
 func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObject {
-	s.mode = widget.NewRadioGroup(
-		[]string{"This computer", "Remote servers"}, s.onModeChanged)
+	// Attached after the initial value, for the same reason as the language
+	// radio: onModeChanged shows and hides localBox and remoteBox, and neither
+	// exists until further down this function.
+	s.mode = widget.NewRadioGroup([]string{"This computer", "Remote servers"}, nil)
 	s.mode.Horizontal = true
 	s.mode.SetSelected(modeLabel(settings.Mode))
 
@@ -156,6 +158,11 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 		widget.NewLabel("Models are not installed with the app. See docs/model-setup.md."),
 		s.localState,
 	)
+
+	// Both boxes exist now, so the mode can decide which of them is visible and
+	// the handler is safe to attach.
+	s.onModeChanged(s.mode.Selected)
+	s.mode.OnChanged = s.onModeChanged
 
 	s.koreanLED = newLED("Korean: not checked")
 	s.englishLED = newLED("English: not checked")

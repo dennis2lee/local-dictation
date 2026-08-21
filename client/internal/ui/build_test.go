@@ -1,0 +1,85 @@
+// The window is built once, at startup, and until now nothing exercised that.
+// A widget constructor that fires its own change handler mid-build reaches an
+// App whose fields are still nil, and the app dies before it draws anything —
+// which is what these cover.
+package ui
+
+import (
+	"testing"
+
+	"fyne.io/fyne/v2/test"
+
+	"github.com/dennis2lee/local-dictation/client/internal/config"
+	"github.com/dennis2lee/local-dictation/client/internal/protocol"
+)
+
+// A bare App: no dialer, no controller, no window. Anything a tab constructor
+// calls back into will dereference nil, which is the point — construction must
+// not call back into the App at all.
+func halfBuiltApp(settings config.Config) *App {
+	return &App{settings: settings, fyne: test.NewApp()}
+}
+
+func testSettings() config.Config {
+	settings := config.Default()
+	settings.Mode = config.ModeLocal
+	settings.Language = protocol.Korean
+	settings.Local.ModelPath = "/models/large-v3-turbo"
+	return settings
+}
+
+func TestTheMainTabBuildsWithoutCallingBackIntoTheApp(t *testing.T) {
+	app := halfBuiltApp(testSettings())
+
+	tab := newMainTab(app)
+
+	if tab.language.Selected != "Korean" {
+		t.Errorf("language radio shows %q, want Korean", tab.language.Selected)
+	}
+	if tab.language.OnChanged == nil {
+		t.Error("the language handler was never attached, so the radio is inert")
+	}
+	if tab.shortcut == nil || tab.status == nil || tab.detail == nil {
+		t.Error("the tab finished construction with widgets missing")
+	}
+}
+
+// buildServerSection, not newSettingsTab: the rest of the tab reaches for the
+// audio backend, and the mode radio is what this is about.
+func TestTheSettingsTabBuildsWithoutCallingBackIntoTheApp(t *testing.T) {
+	settings := testSettings()
+	tab := &settingsTab{app: halfBuiltApp(settings)}
+
+	tab.buildServerSection(settings)
+
+	if tab.mode.Selected != "This computer" {
+		t.Errorf("mode radio shows %q, want \"This computer\"", tab.mode.Selected)
+	}
+	if tab.mode.OnChanged == nil {
+		t.Error("the mode handler was never attached, so the radio is inert")
+	}
+	// The initial mode still has to decide which half is on screen, even though
+	// the handler no longer runs during construction.
+	if tab.localBox.Hidden {
+		t.Error("local mode was selected but its settings are hidden")
+	}
+	if !tab.remoteBox.Hidden {
+		t.Error("local mode was selected but the remote settings are showing")
+	}
+}
+
+func TestTheSettingsTabShowsTheRemoteHalfInRemoteMode(t *testing.T) {
+	settings := testSettings()
+	settings.Mode = config.ModeRemote
+	settings.Remote.Host = "dictation.internal"
+
+	tab := &settingsTab{app: halfBuiltApp(settings)}
+	tab.buildServerSection(settings)
+
+	if tab.remoteBox.Hidden {
+		t.Error("remote mode was selected but the remote settings are hidden")
+	}
+	if !tab.localBox.Hidden {
+		t.Error("remote mode was selected but the local settings are showing")
+	}
+}
