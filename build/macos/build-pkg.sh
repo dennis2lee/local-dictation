@@ -22,7 +22,8 @@ SIGN_PKG=""
 NOTARIZE_PROFILE=""
 IDENTIFIER="com.local-dictation.client"
 
-die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'warning: %s\n' "$*" >&2; }
 info() { printf '==> %s\n' "$*"; }
 
 while [[ $# -gt 0 ]]; do
@@ -114,17 +115,39 @@ if [[ -n "$NOTARIZE_PROFILE" ]]; then
   xcrun stapler staple "$PKG"
 fi
 
+# The disk image is a convenience for people who prefer drag-and-drop; the
+# package is the installer. hdiutil needs to attach a device to build one, which
+# is unreliable inside a sandboxed CI runner and fails intermittently there. So
+# it retries, and if it still cannot, the release goes out without a .dmg rather
+# than not going out.
 info "building the disk image"
 DMG_STAGE="$OUTPUT/.dmg-root"
 rm -rf "$DMG_STAGE"; mkdir -p "$DMG_STAGE"
 ditto "$APP" "$DMG_STAGE/$(basename "$APP")"
 ln -s /Applications "$DMG_STAGE/Applications"
-cp "$ROOT/docs/model-setup.md" "$DMG_STAGE/Install a model first — model-setup.md"
-rm -f "$DMG"
-hdiutil create -quiet -volname "Local Dictation $VERSION" -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG"
+cp "$ROOT/docs/model-setup.md" "$DMG_STAGE/Install a model first - model-setup.md"
+
+DMG_BUILT=0
+for attempt in 1 2 3; do
+  rm -f "$DMG"
+  if output="$(hdiutil create -volname "Local Dictation $VERSION" \
+                 -srcfolder "$DMG_STAGE" -ov -format UDZO "$DMG" 2>&1)"; then
+    DMG_BUILT=1
+    break
+  fi
+  printf 'hdiutil attempt %d failed:\n%s\n' "$attempt" "$output" >&2
+  sleep 5
+done
 rm -rf "$DMG_STAGE"
 
+if [[ "$DMG_BUILT" != "1" ]]; then
+  rm -f "$DMG"
+  warn "could not build the disk image; shipping the package only"
+fi
+
 info "built:"
-ls -lh "$PKG" "$DMG" | sed 's/^/    /'
+artifacts=("$PKG")
+[[ "$DMG_BUILT" == "1" ]] && artifacts+=("$DMG")
+ls -lh "${artifacts[@]}" | sed 's/^/    /'
 printf '\n    shasum -a 256:\n'
-shasum -a 256 "$PKG" "$DMG" | sed 's/^/    /'
+shasum -a 256 "${artifacts[@]}" | sed 's/^/    /'

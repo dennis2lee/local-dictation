@@ -90,6 +90,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos
+          # The .dmg is best-effort — see build-pkg.sh. Warn rather than fail if
+          # only the package is there.
+          if-no-files-found: warn
           path: |
             dist/*.pkg
             dist/*.dmg
