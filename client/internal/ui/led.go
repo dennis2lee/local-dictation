@@ -11,13 +11,14 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/session"
 )
 
-// Colours for the plan's LED table: grey idle, amber working, green live, red
-// needs attention. Chosen to stay legible on both the light and dark themes.
+// The plan's LED table: grey idle, amber working, green live, red needs
+// attention. The values live in theme.go with the rest of the palette, so the
+// dot and everything around it come from one place.
 var ledColours = map[session.LED]color.Color{
-	session.Gray:  color.NRGBA{R: 0x9e, G: 0x9e, B: 0x9e, A: 0xff},
-	session.Amber: color.NRGBA{R: 0xf5, G: 0xa6, B: 0x23, A: 0xff},
-	session.Green: color.NRGBA{R: 0x2e, G: 0xa0, B: 0x43, A: 0xff},
-	session.Red:   color.NRGBA{R: 0xd7, G: 0x3a, B: 0x3a, A: 0xff},
+	session.Gray:  planGray,
+	session.Amber: planAmber,
+	session.Green: planGreen,
+	session.Red:   planRed,
 }
 
 // led is a coloured dot with a caption.

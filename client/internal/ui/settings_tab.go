@@ -179,14 +179,14 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 	s.englishLED = newLED("English: not checked")
 
 	return container.NewVBox(
-		widget.NewLabelWithStyle("Servers", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		sectionHeading("Servers"),
 		s.mode,
 		s.remoteBox,
 		s.localBox,
 		s.koreanLED.Object(),
 		s.englishLED.Object(),
 		container.NewHBox(
-			widget.NewButtonWithIcon("Test connections", theme.ViewRefreshIcon(), s.onTestConnections),
+			primaryButton(widget.NewButtonWithIcon("Test connections", theme.ViewRefreshIcon(), s.onTestConnections)),
 		),
 	)
 }
@@ -258,7 +258,7 @@ func (s *settingsTab) buildMicrophoneSection(settings config.Config) fyne.Canvas
 	s.refreshDevices(settings.Audio.DeviceID)
 
 	return container.NewVBox(
-		widget.NewLabelWithStyle("Microphone", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		sectionHeading("Microphone"),
 		s.microphone,
 		container.NewBorder(nil, nil, nil, s.testButton, s.levelBar),
 		widget.NewButtonWithIcon("Refresh device list", theme.ViewRefreshIcon(), func() {
@@ -368,7 +368,7 @@ func (s *settingsTab) buildShortcutSection(settings config.Config) fyne.CanvasOb
 	s.shortcutKey.SetSelected(settings.Hotkey.Key)
 
 	return container.NewVBox(
-		widget.NewLabelWithStyle("Shortcut", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		sectionHeading("Shortcut"),
 		row,
 		s.shortcutKey,
 		widget.NewLabel("The shortcut works in any application. It takes effect when you save."),
@@ -398,7 +398,7 @@ func (s *settingsTab) buildUpdateSection(settings config.Config) fyne.CanvasObje
 	}
 
 	return container.NewVBox(
-		widget.NewLabelWithStyle("Software update", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+		sectionHeading("Software update"),
 		widget.NewLabel(fmt.Sprintf("Local Dictation %s", s.app.options.Version)),
 		s.updateStatus,
 		container.NewHBox(s.updateButton),

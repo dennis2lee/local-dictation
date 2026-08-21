@@ -30,9 +30,13 @@ func newMainTab(app *App) *mainTab {
 	settings := app.Settings()
 	tab := &mainTab{app: app}
 
+	// The state is the largest text in the window; the line under it is the
+	// quiet one. That is the plan's hierarchy, and it is the right one — the
+	// state is what someone glances at mid-sentence.
 	tab.status = newLED("Dictation stopped")
-	tab.detail = widget.NewLabel("Ready to start with the global shortcut.")
-	tab.detail.Wrapping = fyne.TextWrapWord
+	tab.status.caption.SizeName = theme.SizeNameHeadingText
+	tab.status.caption.TextStyle = fyne.TextStyle{Bold: true}
+	tab.detail = caption("Ready to start with the global shortcut.")
 
 	// The handler is attached after the initial value, not with it. SetSelected
 	// fires OnChanged, and firing it here would run onLanguageChanged — which
@@ -56,22 +60,17 @@ func newMainTab(app *App) *mainTab {
 		tab.problem.Show()
 	}
 
+	// The plan's Main tab is one panel: the state, what to do about it, and the
+	// language, with the shortcut on a chip in the corner. No section headings —
+	// there is only one thing here.
 	tab.body = container.NewVBox(
-		widget.NewLabelWithStyle("Dictation", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		tab.status.Object(),
-		tab.detail,
-		widget.NewSeparator(),
-
-		widget.NewLabelWithStyle("Language", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		tab.language,
-		widget.NewLabel("The language decides which server the session connects to."),
-		widget.NewSeparator(),
-
-		widget.NewLabelWithStyle("Shortcut", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-		container.NewHBox(widget.NewLabel("Press"), tab.shortcut, widget.NewLabel("to start, press it again to stop.")),
+		container.NewBorder(nil, nil, nil, chip(tab.shortcut), widget.NewLabel("")),
+		panel(container.NewVBox(
+			container.NewHBox(tab.status.Object()),
+			tab.detail,
+			tab.language,
+		)),
 		tab.problem,
-		widget.NewSeparator(),
-
 		container.NewHBox(
 			widget.NewButtonWithIcon("Start / stop", theme.MediaRecordIcon(), app.onShortcut),
 			widget.NewButtonWithIcon("Settings", theme.SettingsIcon(), func() {

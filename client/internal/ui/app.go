@@ -110,6 +110,10 @@ func New(options Options) (*App, error) {
 }
 
 func (a *App) buildWindow() {
+	// Before any widget is built, so nothing is measured against the default
+	// theme's type sizes and then re-laid out.
+	a.fyne.Settings().SetTheme(planTheme{})
+
 	// Set on the app before the window exists: Fyne hands the app icon to the
 	// window, the tray and the taskbar, and a window created first would keep
 	// the toolkit's default in its title bar.
