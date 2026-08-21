@@ -37,13 +37,15 @@ type settingsTab struct {
 	remoteBox   *fyne.Container
 
 	// Local mode
-	modelPath  *widget.Entry
-	draftPath  *widget.Entry
-	vadPath    *widget.Entry
-	pythonPath *widget.Entry
-	cpuThreads *widget.Entry
-	localBox   *fyne.Container
-	localState *widget.Label
+	modelPath        *widget.Entry
+	draftPath        *widget.Entry
+	vadPath          *widget.Entry
+	pythonPath       *widget.Entry
+	cpuThreads       *widget.Entry
+	localKoreanPort  *widget.Entry
+	localEnglishPort *widget.Entry
+	localBox         *fyne.Container
+	localState       *widget.Label
 
 	koreanLED  *led
 	englishLED *led
@@ -133,6 +135,11 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 	s.vadPath = entry(settings.Local.VadModelPath, "optional: silero_vad.onnx")
 	s.pythonPath = entry(settings.Local.PythonPath, "optional: leave empty to find Python automatically")
 	s.cpuThreads = entry(threadsText(settings.Local.CPUThreads), "0 = let the decoder choose")
+	// Empty means 0, which means "pick a free one". Something else on the
+	// machine holding 8765 is exactly why the port a session failed on needs to
+	// be reachable from here — the failure already says to come and change it.
+	s.localKoreanPort = entry(portText(settings.Local.KoreanPort), "empty = pick a free port")
+	s.localEnglishPort = entry(portText(settings.Local.EnglishPort), "empty = pick a free port")
 	s.localState = widget.NewLabel("The server starts the first time you dictate.")
 	s.localState.Wrapping = fyne.TextWrapWord
 
@@ -143,6 +150,8 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 			widget.NewFormItem("Silero VAD file", s.vadPath),
 			widget.NewFormItem("Python", s.pythonPath),
 			widget.NewFormItem("CPU threads", s.cpuThreads),
+			widget.NewFormItem("Korean port", s.localKoreanPort),
+			widget.NewFormItem("English port", s.localEnglishPort),
 		),
 		widget.NewLabel("Models are not installed with the app. See docs/model-setup.md."),
 		s.localState,
@@ -425,6 +434,8 @@ func (s *settingsTab) onSave() {
 	settings.Local.VadModelPath = s.vadPath.Text
 	settings.Local.PythonPath = s.pythonPath.Text
 	settings.Local.CPUThreads = parsePort(s.cpuThreads.Text)
+	settings.Local.KoreanPort = parsePort(s.localKoreanPort.Text)
+	settings.Local.EnglishPort = parsePort(s.localEnglishPort.Text)
 
 	device := s.selectedDevice()
 	settings.Audio.DeviceID, settings.Audio.DeviceName = device.ID, device.Name
@@ -444,7 +455,8 @@ func (s *settingsTab) setEditable(editable bool) {
 	widgets := []fyne.Disableable{
 		s.mode, s.host, s.koreanPort, s.englishPort, s.useTLS, s.caCert,
 		s.clientCert, s.clientKey, s.modelPath, s.draftPath, s.vadPath, s.pythonPath,
-		s.cpuThreads, s.microphone, s.testButton, s.shortcutKey, s.saveButton,
+		s.cpuThreads, s.localKoreanPort, s.localEnglishPort,
+		s.microphone, s.testButton, s.shortcutKey, s.saveButton,
 	}
 	for _, check := range s.modifierChecks {
 		widgets = append(widgets, check)

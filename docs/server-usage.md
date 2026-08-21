@@ -108,6 +108,47 @@ what `--config` does on the command line.
 
 Precedence runs command line, then environment, then YAML, then the defaults.
 
+### Changing the ports
+
+The port lives in each language's config, and the two must differ:
+
+```yaml
+# <prefix>/config/server-ko.yaml
+server:
+  port: 9765
+```
+
+```bash
+local-dictation-server check ko && local-dictation-server restart ko
+```
+
+`check` does not bind the port, so it will not tell you the new one is free —
+`start` will, by failing with `address already in use` and printing it.
+
+For a one-off, or for a host-specific port that should not be written into a
+shipped file, the environment override does the same thing without editing
+anything:
+
+```bash
+LOCAL_DICTATION_SERVER__PORT=9765 local-dictation-server restart ko
+```
+
+Three things have to agree on the number, and only the first is in this file:
+
+| Where | What to change |
+| --- | --- |
+| The server | `server.port` in that language's config |
+| The firewall | The inbound rule, if the server is not on loopback |
+| Each client | **Settings → Remote servers**, the Korean and English port fields |
+
+A client pointed at the old port reports that it cannot reach the server, which
+is accurate and unhelpful — change the clients in the same sitting.
+
+In standalone mode none of this applies: the client starts the server itself and
+leaves the ports at `0`, which means "pick a free one at startup". Pin them in
+**Settings → This computer** only if something else on the machine needs those
+numbers to be predictable.
+
 ### Settings worth understanding
 
 | Setting | Why it matters |
@@ -118,6 +159,8 @@ Precedence runs command line, then environment, then YAML, then the defaults.
 | `streaming.chunk_ms` | How often a decode pass runs. Lower is snappier and costs more CPU. |
 | `streaming.silence_ms` | Trailing silence that ends a sentence. Raise it in a noisy room. |
 | `streaming.max_window_seconds` | Caps how much audio one pass covers, so cost stays flat during a long monologue. |
+| `server.port` | The port that language serves on. The two must differ; see above. |
+| `server.host` | `127.0.0.1` serves only this machine, `0.0.0.0` every interface. Pair the second with TLS. |
 | `limits.max_sessions` | A hard gate. Over it, the server returns `server_busy` immediately rather than queueing behind a decoder that cannot catch up. |
 | `logging.store_audio` / `store_transcript` | Both `false`, and they should stay that way. See below. |
 
