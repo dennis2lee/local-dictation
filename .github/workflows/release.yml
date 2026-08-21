@@ -1,0 +1,148 @@
+name: Release
+
+# Tag a version to publish it:
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Each platform builds on its own runner. The Windows MSI in particular needs a
+# Windows machine with the WiX toolset, which is exactly why it lives here
+# rather than in a cross-compile that nobody can verify.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, without the leading v"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.pick.outputs.value }}
+    steps:
+      - id: pick
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "value=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.23" }
+      - name: Server tests
+        working-directory: server
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -e '.[dev]'
+          .venv/bin/python -m pytest -q
+      - name: Client tests
+        working-directory: client
+        # The GUI packages need X11 headers on Linux; the tests that matter are
+        # all in packages that do not.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgl1-mesa-dev xorg-dev libasound2-dev
+          go test ./...
+
+  server:
+    needs: [version, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: build/server/package.sh --version "${{ needs.version.outputs.value }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server
+          path: dist/*.tar.gz
+
+  macos:
+    needs: [version, test]
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.23" }
+      - name: Build the package
+        # Signing identities are optional so a fork can build without secrets.
+        # Recipients of an unsigned build clear Gatekeeper by hand.
+        run: |
+          args=(--version "${{ needs.version.outputs.value }}")
+          if [ -n "${{ secrets.MACOS_SIGN_APP }}" ]; then
+            args+=(--sign-app "${{ secrets.MACOS_SIGN_APP }}")
+            args+=(--sign-pkg "${{ secrets.MACOS_SIGN_PKG }}")
+          fi
+          build/macos/build-pkg.sh "${args[@]}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/*.pkg
+            dist/*.dmg
+
+  windows:
+    needs: [version, test]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.23" }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install WiX
+        run: |
+          dotnet tool install --global wix
+          wix extension add -g WixToolset.UI.wixext
+          wix extension add -g WixToolset.Util.wixext
+      - name: Build the MSI
+        shell: pwsh
+        run: |
+          # Git for Windows provides bash, which build-exe.sh needs.
+          & "$env:ProgramFiles\Git\bin\bash.exe" build/windows/build-exe.sh `
+              --version "${{ needs.version.outputs.value }}"
+          .\build\windows\build-msi.ps1 -Version "${{ needs.version.outputs.value }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.msi
+
+  publish:
+    needs: [version, server, macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts }
+      - name: Collect and checksum
+        run: |
+          mkdir -p dist
+          find artifacts -type f -exec mv {} dist/ \;
+          cd dist && sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            - **macOS** — `LocalDictation-${{ needs.version.outputs.value }}.pkg`
+            - **Windows** — `LocalDictation-${{ needs.version.outputs.value }}-x64.msi`
+            - **Shared server** — `local-dictation-server-${{ needs.version.outputs.value }}.tar.gz`
+
+            Then install a speech model — one command, in
+            [docs/model-setup.md](docs/model-setup.md). Models are not bundled:
+            they are 1.5–2.9 GB and carry their own licence.
+
+            Full instructions: [docs/installation.md](docs/installation.md)
