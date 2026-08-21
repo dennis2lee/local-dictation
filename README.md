@@ -70,8 +70,7 @@ streaming policy either way.
 | [`server/`](server) | Python server — API, streaming, inference, config, scripts |
 | [`client/`](client) | Go client — UI, session, audio, transport, text input |
 | [`build/`](build) | Release builds: macOS pkg/dmg, Windows MSI, server tarball |
-| [`docs/`](docs) | Installation, usage, model setup, latency, operations |
-| [`doc/`](doc) | The original project plan |
+| [`docs/`](docs) | Installation, usage, model setup, latency, operations, the original plan |
 
 ## The latency problem, and the fix
 
