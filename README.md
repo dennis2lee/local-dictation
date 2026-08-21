@@ -122,6 +122,8 @@ The tests cover the parts where being wrong is expensive:
   never retracts, revisions strictly increase, a final is terminal.
 - **Cursor composition** — stale events discarded, partial text replaced without
   duplicating, backspaces counted in runes so Korean syllables survive.
+- **Focus** — a session that outlives the window it started in stops instead of
+  typing the rest of the sentence somewhere else.
 - **Privacy** — a full session is run and the logs are searched for the text it
   produced.
 - **End to end** — from an empty directory, the client builds a Python

@@ -132,10 +132,19 @@ Run the self-check:
 It names the missing piece. The two common answers are macOS Accessibility
 permission and a missing model.
 
-### Text appears in the wrong place
+### Dictation stopped when I clicked somewhere else
 
-Local Dictation types into whatever has focus. If you click into another window
-mid-sentence, the rest goes there. Stop, put the cursor back, and start again.
+That is deliberate. Local Dictation types into whatever window has focus, so a
+session that kept running after you switched applications would put the rest of
+the sentence into whatever you clicked — a chat box, a search field, or a
+password box. When focus moves, the session stops: confirmed text stays where it
+was written, and the unconfirmed tail is removed.
+
+Put the cursor back and press the shortcut again.
+
+On macOS this check needs the same Accessibility permission everything else
+does. If focus cannot be read, the check is skipped rather than stopping every
+session, so the warning above about where text lands applies.
 
 ### Nothing is transcribed but the indicator is green
 
@@ -180,4 +189,5 @@ recognisable text anywhere in the logs.
 
 **Do not dictate into a password field.** The text is typed like keyboard input,
 so it will land there, and a password field is exactly the wrong place for
-something that also has to be re-typed as it is revised.
+something that also has to be re-typed as it is revised. Local Dictation cannot
+reliably tell a password field from any other text field, so this one is on you.
