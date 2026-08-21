@@ -6,6 +6,12 @@ name: Release
 # Each platform builds on its own runner. The Windows MSI in particular needs a
 # Windows machine with the WiX toolset, which is exactly why it lives here
 # rather than in a cross-compile that nobody can verify.
+#
+# Shape of the run: everything that can start at once does. The three builds do
+# not wait for the test jobs — publishing does. A failed suite therefore costs
+# some runner minutes and produces no release, which is the trade worth making
+# when the alternative is every release waiting on a suite that already ran on
+# main before the tag was pushed.
 
 on:
   push:
@@ -33,27 +39,41 @@ jobs:
             echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           fi
 
-  test:
+  test-server:
+    name: Server tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - uses: actions/setup-go@v5
-        # go.sum lives under client/, and without being told so setup-go looks
-        # for it at the repository root, fails to find it, and silently runs
-        # with the module cache disabled — every job re-downloading Fyne and its
-        # C dependencies from scratch.
-        with:
-          go-version-file: client/go.mod
-          cache-dependency-path: client/go.sum
-      - name: Server tests
-        working-directory: server
+        with: { python-version: "3.12", cache: pip }
+      - working-directory: server
         run: |
           python -m venv .venv
           .venv/bin/pip install --quiet -e '.[dev]'
           .venv/bin/python -m pytest -q
-      - name: Client tests
+
+  test-client:
+    name: Client tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go.mod
+          cache: false
+      - name: Locate the Go caches
+        shell: bash
+        run: |
+          echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-${{ hashFiles('client/**/*.go') }}
+          restore-keys: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-
+      - name: Test
         working-directory: client
         # Fyne pulls in glfw, which compiles against both X11 and Wayland on
         # Linux. Without the Wayland headers the GUI packages fail to build and
@@ -66,7 +86,7 @@ jobs:
           go test ./...
 
   server:
-    needs: [version, test]
+    needs: [version]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -77,18 +97,32 @@ jobs:
           path: dist/*.tar.gz
 
   macos:
-    needs: [version, test]
+    needs: [version]
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        # go.sum lives under client/, and without being told so setup-go looks
-        # for it at the repository root, fails to find it, and silently runs
-        # with the module cache disabled — every job re-downloading Fyne and its
-        # C dependencies from scratch.
         with:
           go-version-file: client/go.mod
-          cache-dependency-path: client/go.sum
+          # Restored explicitly below. See the Test workflow for why setup-go's
+          # own cache cannot be the one a release build starts from.
+          cache: false
+      - name: Locate the Go caches
+        shell: bash
+        run: |
+          echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+      - name: Warm the build cache from the default branch
+        # Restore, never save: a cache written by a run on refs/tags/v0.1.11 is
+        # visible to that tag and to nothing else, so saving one here would be
+        # an upload no later release could read.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-${{ hashFiles('client/**/*.go') }}
+          restore-keys: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-
       - name: Build the package
         # Signing identities are optional so a fork can build without secrets.
         # Recipients of an unsigned build clear Gatekeeper by hand.
@@ -110,18 +144,32 @@ jobs:
             dist/*.dmg
 
   windows:
-    needs: [version, test]
+    needs: [version]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        # go.sum lives under client/, and without being told so setup-go looks
-        # for it at the repository root, fails to find it, and silently runs
-        # with the module cache disabled — every job re-downloading Fyne and its
-        # C dependencies from scratch.
         with:
           go-version-file: client/go.mod
-          cache-dependency-path: client/go.sum
+          # Restored explicitly below. See the Test workflow for why setup-go's
+          # own cache cannot be the one a release build starts from.
+          cache: false
+      - name: Locate the Go caches
+        shell: bash
+        run: |
+          echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+      - name: Warm the build cache from the default branch
+        # This is the whole reason a release used to take ten minutes: the cgo
+        # compile of Fyne, glfw and miniaudio is six of them on a Windows
+        # runner, and it was being done from scratch every time.
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-${{ hashFiles('client/**/*.go') }}
+          restore-keys: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Install WiX
@@ -147,10 +195,11 @@ jobs:
           path: dist/*.msi
 
   publish:
-    needs: [version, server, macos, windows]
+    # The gate. Builds run ahead of the suites; nothing reaches a release page
+    # until both have passed.
+    needs: [version, test-server, test-client, server, macos, windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: artifacts }
       - name: Collect and checksum
@@ -177,3 +226,6 @@ jobs:
             Full instructions — [docs/client-install.md](docs/client-install.md)
             for the desktop app, [docs/server-install.md](docs/server-install.md)
             for a shared server.
+
+            Already running it? **Settings → Software update → Check for
+            updates** finds this release on its own.

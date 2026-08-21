@@ -56,7 +56,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: client/go.mod
-          cache-dependency-path: client/go.sum
+          # The caches are handled below instead. setup-go writes one only when
+          # its own key misses, so the first run under a given go.sum freezes
+          # the contents until the dependencies change — and once frozen, no
+          # later change to how anything is compiled ever reaches it.
+          cache: false
+      - name: Locate the Go caches
+        shell: bash
+        run: |
+          echo "GOCACHE=$(go env GOCACHE)" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$(go env GOMODCACHE)" >> "$GITHUB_ENV"
+      - name: Go caches
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          # Rewritten whenever the client changes, restored from the newest
+          # cache for these dependencies otherwise. The release workflow reads
+          # these by the same prefix: a run on a tag can only restore caches
+          # written on the default branch, so this job is the one place a
+          # release build's cache can come from.
+          key: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-${{ hashFiles('client/**/*.go') }}
+          restore-keys: go-${{ runner.os }}-${{ hashFiles('client/go.sum') }}-
       - name: Linux GUI headers
         if: runner.os == 'Linux'
         # Fyne pulls in glfw, which compiles against X11 and Wayland both.
@@ -73,7 +95,12 @@ jobs:
         run: go test -race ./...
       - name: Build
         working-directory: client
-        run: go build ./cmd/...
+        # -trimpath because the release builds with it. It goes into every
+        # package's build ID, so a cache warmed without it is a cache a release
+        # cannot use — and that one flag was six minutes of every release,
+        # spent compiling Fyne, glfw and miniaudio again on a Windows runner
+        # that had just restored 200 MB of unusable objects.
+        run: go build -trimpath ./cmd/...
 
   format:
     name: Formatting
