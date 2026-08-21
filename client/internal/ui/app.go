@@ -51,7 +51,7 @@ type App struct {
 	controller *session.Controller
 	capture    *audio.Capture
 	composer   *input.Composer
-	hotkeys    *hotkey.Manager
+	hotkeys    registrar
 
 	mainTab     *mainTab
 	settingsTab *settingsTab
@@ -148,7 +148,15 @@ func (a *App) Quit() {
 		// Abort first: it drops the volatile partial and keeps what was
 		// committed, which is what someone quitting mid-sentence wants.
 		a.controller.Abort("Local Dictation is closing.")
-		a.hotkeys.Unregister()
+		// Same main-queue rule as registration, and Quit is called from the
+		// window's close handler — which is the main goroutine.
+		unregistered := make(chan struct{})
+		go func() { defer close(unregistered); a.hotkeys.Unregister() }()
+		select {
+		case <-unregistered:
+		case <-time.After(2 * time.Second):
+			log.Print("hotkey: unregister did not finish; quitting anyway")
+		}
 		_ = a.composer.Close()
 		_ = a.capture.Close()
 
@@ -195,7 +203,31 @@ func (a *App) ApplySettings(updated config.Config) error {
 	return nil
 }
 
+// registrar is the part of hotkey.Manager the App uses. It is an interface so
+// the registration path can be exercised without a keyboard — and that path
+// needs exercising, because getting it wrong is not a failed shortcut but a
+// dead process.
+type registrar interface {
+	Register(hotkey.Binding) error
+	Unregister()
+}
+
+// registerHotkey hands the work to another goroutine and returns.
+//
+// On macOS both Register and Unregister reach dispatch_sync onto the main
+// queue. Calling that from the goroutine locked to the main thread is a queue
+// waiting on itself, which libdispatch detects and traps: SIGTRAP inside cgo,
+// no window, no message. Before Run() there is nothing draining that queue
+// either, so even without the trap it would wait forever.
+//
+// Off the main goroutine it enqueues and completes once the event loop is up.
+// The result reaches the window through setShortcutProblem, which routes itself
+// back onto the Fyne goroutine.
 func (a *App) registerHotkey(binding config.Hotkey) {
+	go a.registerHotkeyNow(binding)
+}
+
+func (a *App) registerHotkeyNow(binding config.Hotkey) {
 	err := a.hotkeys.Register(hotkey.Binding{Modifiers: binding.Modifiers, Key: binding.Key})
 	if err == nil {
 		a.mainTab.setShortcutProblem("")

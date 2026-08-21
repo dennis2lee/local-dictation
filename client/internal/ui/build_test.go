@@ -83,3 +83,60 @@ func TestTheSettingsTabShowsTheRemoteHalfInRemoteMode(t *testing.T) {
 		t.Error("remote mode was selected but the local settings are showing")
 	}
 }
+
+// The certificate fields are for a managed deployment. Someone connecting a
+// laptop to a Mac on the same network has nothing to put in them, and three
+// blank required-looking fields are how a working setup looks broken.
+func TestCertificateFieldsAreHiddenUntilTLSIsOn(t *testing.T) {
+	settings := testSettings()
+	settings.Mode = config.ModeRemote
+	settings.Remote.Host = "192.168.1.20"
+	settings.Remote.TLS.Enabled = false
+
+	tab := &settingsTab{app: halfBuiltApp(settings)}
+	tab.buildServerSection(settings)
+
+	if !tab.tlsBox.Hidden {
+		t.Error("TLS is off but the certificate fields are showing")
+	}
+	if tab.useTLS.Checked {
+		t.Error("the TLS switch is on when the settings say it is off")
+	}
+
+	tab.useTLS.SetChecked(true)
+	if tab.tlsBox.Hidden {
+		t.Error("TLS was switched on and the certificate fields stayed hidden")
+	}
+
+	tab.useTLS.SetChecked(false)
+	if !tab.tlsBox.Hidden {
+		t.Error("TLS was switched off and the certificate fields stayed visible")
+	}
+}
+
+func TestCertificateFieldsShowWhenTLSIsAlreadyOn(t *testing.T) {
+	settings := testSettings()
+	settings.Mode = config.ModeRemote
+	settings.Remote.Host = "dictation.internal"
+	settings.Remote.TLS.Enabled = true
+
+	tab := &settingsTab{app: halfBuiltApp(settings)}
+	tab.buildServerSection(settings)
+
+	if tab.tlsBox.Hidden {
+		t.Error("TLS is on and the certificate fields are hidden")
+	}
+}
+
+// Nothing about a plain LAN setup should fail validation.
+func TestARemoteServerWithoutTLSIsValid(t *testing.T) {
+	settings := testSettings()
+	settings.Mode = config.ModeRemote
+	settings.Remote.Host = "192.168.1.20"
+	settings.Remote.KoreanPort, settings.Remote.EnglishPort = 8765, 8766
+	settings.Remote.TLS.Enabled = false
+
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("a remote server without certificates should be valid: %v", err)
+	}
+}

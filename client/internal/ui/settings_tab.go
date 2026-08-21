@@ -34,6 +34,7 @@ type settingsTab struct {
 	caCert      *widget.Entry
 	clientCert  *widget.Entry
 	clientKey   *widget.Entry
+	tlsBox      *fyne.Container
 	remoteBox   *fyne.Container
 
 	// Local mode
@@ -114,9 +115,20 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 	s.caCert = entry(settings.Remote.TLS.CACertificate, "/path/to/internal-ca.crt")
 	s.clientCert = entry(settings.Remote.TLS.ClientCertificate, "optional, for mTLS")
 	s.clientKey = entry(settings.Remote.TLS.ClientKey, "optional, for mTLS")
-	s.useTLS = widget.NewCheck("Use TLS (wss)", nil)
+	s.useTLS = widget.NewCheck("Use TLS (wss) — for a server with certificates", nil)
 	s.useTLS.SetChecked(settings.Remote.TLS.Enabled)
 
+	// These three belong to a managed deployment with an internal CA. On a home
+	// network there is nothing to put in them, and showing them anyway reads as
+	// three more things to work out before this will connect. They appear when
+	// TLS does.
+	s.tlsBox = container.NewVBox(
+		widget.NewForm(
+			widget.NewFormItem("CA certificate", s.caCert),
+			widget.NewFormItem("Client certificate", s.clientCert),
+			widget.NewFormItem("Client key", s.clientKey),
+		),
+	)
 	s.remoteBox = container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("Server address", s.host),
@@ -124,12 +136,11 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 			widget.NewFormItem("English port", s.englishPort),
 		),
 		s.useTLS,
-		widget.NewForm(
-			widget.NewFormItem("CA certificate", s.caCert),
-			widget.NewFormItem("Client certificate", s.clientCert),
-			widget.NewFormItem("Client key", s.clientKey),
-		),
+		s.tlsBox,
 	)
+	// Attached after tlsBox exists, for the same reason the mode radio is.
+	s.onTLSChanged(s.useTLS.Checked)
+	s.useTLS.OnChanged = s.onTLSChanged
 
 	s.modelPath = entry(settings.Local.ModelPath, config.DefaultModelPath())
 	s.draftPath = entry(settings.Local.DraftModelPath,
@@ -178,6 +189,15 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 			widget.NewButtonWithIcon("Test connections", theme.ViewRefreshIcon(), s.onTestConnections),
 		),
 	)
+}
+
+// onTLSChanged shows the certificate fields only when they can matter.
+func (s *settingsTab) onTLSChanged(enabled bool) {
+	if enabled {
+		s.tlsBox.Show()
+		return
+	}
+	s.tlsBox.Hide()
 }
 
 func (s *settingsTab) onModeChanged(label string) {
