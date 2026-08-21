@@ -52,6 +52,14 @@ the VAD model, the certificates — without binding a port. Run it before a
 restart: a model directory that is not there is a message here rather than a
 server that exits four seconds after `start` reported it as up.
 
+To check a config file on a machine that is not the one that will serve it —
+editing on a laptop, or in CI — ask the narrower question directly, which
+validates the file without requiring anything it names to be installed:
+
+```
+python -m app.main --config config/server-ko.yaml --check-config
+```
+
 `start` waits up to `LD_START_TIMEOUT` seconds (default 15) for the new process
 to either fail or bind its port, so a start that cannot work is reported as a
 failure with the reason from the log. Loading a model takes minutes and happens

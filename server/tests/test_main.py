@@ -124,3 +124,43 @@ def test_a_model_that_cannot_be_loaded_is_reported_not_raised(tmp_path, capsys):
     with pytest.raises(InferenceError) as caught:
         FasterWhisperTranscriber(ModelSettings(path=str(directory)))
     assert "could not be loaded" in str(caught.value)
+
+
+def check_config(path: Path, *extra: str) -> int:
+    return cli(["--config", str(path), "--check-config", *extra])
+
+
+def test_a_config_validates_on_a_machine_that_could_not_serve_it(tmp_path, capsys):
+    """The question CI asks of the shipped configs.
+
+    They name `/opt/local-dictation/models/large-v3-turbo` and a TLS keypair,
+    none of which exists on a runner. `--check` is right to refuse that machine
+    and wrong as a test of the file, so the two are separate questions.
+    """
+    config = write_config(
+        tmp_path,
+        f'model: {{path: "{tmp_path / "absent"}"}}\n'
+        "security:\n"
+        f'  tls_certificate: "{tmp_path / "absent.crt"}"\n'
+        f'  tls_private_key: "{tmp_path / "absent.key"}"\n',
+    )
+
+    assert check_config(config) == 0
+    assert "is valid" in capsys.readouterr().out
+    # And the other question still gets the other answer.
+    assert check(config) == 1
+
+
+def test_an_invalid_config_still_fails_the_config_check(tmp_path, capsys):
+    config = write_config(tmp_path, "server: {port: -1}\n")
+
+    assert check_config(config) == 2
+    assert "configuration error" in capsys.readouterr().err
+
+
+def test_the_shipped_configs_are_valid():
+    """They ship to every install, and nothing else opens them until a server
+    starts with one."""
+    shipped = Path(__file__).resolve().parent.parent / "config"
+    for name in ("server-ko.yaml", "server-en.yaml"):
+        assert check_config(shipped / name) == 0

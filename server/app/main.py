@@ -140,6 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="validate the configuration and exit without binding a port",
     )
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="validate the configuration file itself and exit, without asking "
+        "whether the files it names are installed on this machine",
+    )
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     return parser
 
@@ -181,6 +187,18 @@ def cli(argv: list[str] | None = None) -> int:
                 "store_transcript": settings.logging.store_transcript,
             },
         )
+
+    if args.check_config:
+        # Deliberately not preflight. This answers "is this a valid
+        # configuration", not "is this machine provisioned to serve it" — the
+        # question CI asks of the shipped configs, on a runner with no model
+        # installed and no TLS material, where the second question could only
+        # ever be answered no.
+        print(
+            f"ok: {args.config or 'the default configuration'} is valid "
+            f"({settings.language}, {settings.server.host}:{settings.server.port})"
+        )
+        return 0
 
     if args.check:
         problems, warnings = preflight(settings, backend=args.backend)

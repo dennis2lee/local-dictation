@@ -40,9 +40,13 @@ jobs:
         run: .venv/bin/python -m pytest -q
       - name: Shipped configs validate
         working-directory: server
+        # --check-config, not --check. The second one asks whether this machine
+        # could serve the config — whether the model is installed and the TLS
+        # keypair is readable — which on a runner is a question that can only be
+        # answered no. What is being tested here is the file.
         run: |
-          .venv/bin/python -m app.main --config config/server-ko.yaml --check
-          .venv/bin/python -m app.main --config config/server-en.yaml --check
+          .venv/bin/python -m app.main --config config/server-ko.yaml --check-config
+          .venv/bin/python -m app.main --config config/server-en.yaml --check-config
 
   client:
     name: Client (Go)
