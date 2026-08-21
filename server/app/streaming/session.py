@@ -32,7 +32,7 @@ from typing import Protocol
 from app.inference.base import InferenceError, Transcriber, TranscriptionResult, Word
 from app.protocol import ServerError, ServerMessage, ServerTranscript
 from app.settings import StreamingSettings
-from app.streaming.buffer import AudioBuffer, AudioFormatError
+from app.streaming.buffer import BYTES_PER_SAMPLE, SAMPLE_RATE, AudioBuffer, AudioFormatError
 from app.streaming.local_agreement import LocalAgreement
 from app.streaming.vad import SilenceTracker, create_vad
 
@@ -100,6 +100,9 @@ class StreamingSession:
         #: Tail of the committed text, handed to the decoder so a trimmed window
         #: still knows what sentence it is in the middle of.
         self._prompt = ""
+        #: Window size below which draft compaction is not retried, set after an
+        #: attempt that found no safe word boundary to cut at.
+        self._next_draft_compaction_seconds = 0.0
 
         self._wake = asyncio.Event()
         self._flush_requested = False
@@ -221,7 +224,13 @@ class StreamingSession:
                 )
             )
             await self._finalize()
-            return not self._flush_requested
+            # A flush can arrive while the buffer is already over the cap. The
+            # finalize above serves it too — signal that, or the flusher waits
+            # out its whole timeout for a decode that already happened.
+            if self._flush_requested:
+                self._flush_done.set()
+                return False
+            return True
 
         if self._flush_requested:
             await self._finalize()
@@ -265,7 +274,11 @@ class StreamingSession:
                 self._agreement.reset()
                 self._agreement.update(hypothesis)
             self._emit(self._committed_prefix, hypothesis, final=False)
-            self._trim_decoded_audio(result)
+            # NOT _trim_decoded_audio: that commits from the window agreement,
+            # which in draft mode holds draft text — text that must never
+            # become `stable`. The draft window is bounded by an accurate pass
+            # instead.
+            await self._compact_draft_window()
             return
 
         if agreement.conflict:
@@ -321,6 +334,58 @@ class StreamingSession:
             },
         )
 
+    async def _compact_draft_window(self) -> None:
+        """Bound the decode window in draft mode without committing draft text.
+
+        The single-model path trims by committing the window agreement's text,
+        but here that agreement holds draft hypotheses. So when the window has
+        grown past `max_window_seconds`, the accurate model decodes it once and
+        everything it read except a short tail is committed from *its* words.
+        The pass costs one accurate decode per window length of speech, which
+        is the price of the contract that only the accurate model's reading
+        ever becomes `stable`.
+        """
+        window_seconds = self._buffer.duration_seconds
+        if window_seconds < self._settings.max_window_seconds:
+            return
+        if window_seconds < self._next_draft_compaction_seconds:
+            return  # the last attempt found no boundary; wait for more audio
+
+        pcm = self._buffer.snapshot()
+        snapshot_seconds = len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+        result = await self._decode(pcm, self._transcriber)
+
+        # Keep a tail uncommitted: the words nearest the cut are the ones more
+        # audio could still revise, and timestamps near the edge are the least
+        # reliable.
+        keep_tail = max(self._silence_seconds, 2 * self._chunk_seconds)
+        cut_limit = snapshot_seconds - keep_tail
+        words = result.words if result is not None else ()
+        committed_words = [w for w in words if w.end <= cut_limit]
+        text = "".join(w.text for w in committed_words).strip()
+        if not committed_words or not text:
+            # No safe boundary (decode failed, no timings, or all words hug the
+            # edge). Leave the window alone — slower, never wrong — and do not
+            # retry until it has grown enough to plausibly look different.
+            self._next_draft_compaction_seconds = window_seconds + 2.0
+            return
+
+        self._buffer.trim_before(committed_words[-1].end)
+        self._committed_prefix += text + " "
+        self._prompt = self._committed_prefix[-_PROMPT_CHARACTERS:]
+        self._agreement.reset()
+        self._window_hypothesis = ""
+        self._next_draft_compaction_seconds = 0.0
+        self._emit(self._committed_prefix, "", final=False)
+        log.debug(
+            "compacted draft window",
+            extra={
+                "session_id": self.session_id,
+                "trimmed_seconds": round(committed_words[-1].end, 2),
+                "window_seconds": round(self._buffer.duration_seconds, 2),
+            },
+        )
+
     async def _finalize(self) -> None:
         """End the current utterance, decoding any audio not yet seen."""
         # In draft mode the accurate model has not seen this audio at all, so it
@@ -330,23 +395,32 @@ class StreamingSession:
         needs_accurate_pass = self._silence.has_speech and (
             self._draft is not None or self._buffer.undecoded_seconds > 0
         )
+        accurate_text: str | None = None
         if needs_accurate_pass:
             pcm = self._buffer.snapshot()
             self._buffer.mark_decoded()
             # Always the accurate model, even in draft mode: this is the pass
             # whose output the user keeps.
             result = await self._decode(pcm, self._transcriber)
-            if result is not None and result.text.strip():
-                self._window_hypothesis = result.text.strip()
+            if result is not None:
+                accurate_text = result.text.strip()
+                if accurate_text:
+                    self._window_hypothesis = accurate_text
 
         if self._draft is not None:
-            # The window agreement only ever held draft text, and none of it
-            # reached the client as `stable`. Clearing it means the accurate
-            # reading cannot "conflict" with a guess nobody committed.
+            # The window agreement and hypothesis only ever held draft text,
+            # which must not become committed. If the accurate pass failed, the
+            # plan's error rule applies: the partial the user was watching is
+            # dropped and only text the accurate model already committed stays.
             self._agreement.reset()
+            window_text = accurate_text or ""
+        else:
+            window_text = self._window_hypothesis or self._agreement.committed
 
-        window_text = self._window_hypothesis or self._agreement.committed
         await self._close_utterance(window_text)
+        # A flush that had nothing to say never reaches the metrics block in
+        # _close_utterance; clear the mark so it cannot time a later utterance.
+        self._flush_started_at = None
         self._reset_utterance()
 
     async def _close_utterance(self, window_text: str) -> None:
@@ -384,6 +458,7 @@ class StreamingSession:
         self._committed_prefix = ""
         self._prompt = ""
         self._last_emitted = None
+        self._next_draft_compaction_seconds = 0.0
 
     def _start_new_utterance(self) -> None:
         self._utterance_index += 1

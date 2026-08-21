@@ -395,3 +395,93 @@ async def test_a_draft_revision_does_not_split_the_utterance(streaming_settings,
 
     utterances = {e.utterance_id for e in events if isinstance(e, ServerTranscript)}
     assert len(utterances) == 1, f"draft churn split the utterance into {len(utterances)}"
+
+
+async def test_flush_during_an_over_long_utterance_returns_promptly(executor):
+    """A flush that arrives when the buffer is already over the cap must be
+    served by the forced finalize, not left to time out."""
+    settings = StreamingSettings(
+        chunk_ms=200, silence_ms=5000, max_utterance_seconds=2, vad="energy"
+    )
+    slow = FakeTranscriber("ko", seconds_per_word=0.3, latency_seconds=0.2)
+    async with StreamingSession(
+        session_id="s-1", transcriber=slow, settings=settings, executor=executor
+    ) as session:
+        # No awaits between pushes: the decode loop first runs inside flush(),
+        # when the buffer is already past max_utterance_seconds.
+        for _ in range(3):
+            session.push_audio(speech(1.0))
+        await session.flush(timeout=1.0)
+        events = await drain(session)
+
+    assert any(isinstance(e, ServerError) and e.code == "utterance_too_long" for e in events)
+    assert not any(
+        isinstance(e, ServerError) and "flush timed out" in e.message for e in events
+    ), "the flush waited out its timeout instead of being served by the forced finalize"
+    assert any(e.final for e in events if isinstance(e, ServerTranscript))
+
+
+async def test_draft_window_compaction_commits_accurate_text_only(executor):
+    """When a draft-mode utterance outgrows the decode window, the committed
+    prefix must come from an accurate pass — never from the draft."""
+    settings = StreamingSettings(
+        chunk_ms=200,
+        silence_ms=300,
+        max_utterance_seconds=30,
+        max_window_seconds=1.0,
+        agreement_window=2,
+        vad="energy",
+    )
+    draft = FakeTranscriber("ko", seconds_per_word=0.3, script=["빠른", "초안", "글", "더", "더더"])
+    primary = FakeTranscriber("ko", seconds_per_word=0.3, script=["정확한", "최종", "글", "더", "더더"])
+
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=primary,
+        settings=settings,
+        executor=executor,
+        draft=draft,
+    ) as session:
+        await feed(session, [speech(0.2)] * 14)
+        await session.flush()
+        events = await drain(session)
+
+    transcripts = [e for e in events if isinstance(e, ServerTranscript)]
+    committed_before_final = [e.stable for e in transcripts if not e.final and e.stable]
+    assert committed_before_final, "the window never compacted, so the test proves nothing"
+    assert all("초안" not in stable for stable in committed_before_final), (
+        "draft text was committed at the window boundary"
+    )
+    assert all("정확한" in stable for stable in committed_before_final)
+    assert primary.calls >= 2, "compaction should have cost an accurate pass before the final one"
+
+    seen = ""
+    for event in transcripts:
+        assert event.stable.startswith(seen), "compaction retracted committed text"
+        seen = event.stable
+
+
+async def test_draft_finalize_failure_never_commits_the_draft_guess(streaming_settings, executor):
+    """If the accurate pass fails at finalize, the plan's error rule applies:
+    the draft partial is dropped, not promoted to committed text."""
+    draft = FakeTranscriber("ko", seconds_per_word=0.3, script=["빠른", "초안", "글"])
+    primary = FakeTranscriber("ko", seconds_per_word=0.3, fail_on_call=1)
+
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=primary,
+        settings=streaming_settings,
+        executor=executor,
+        draft=draft,
+    ) as session:
+        await feed(session, [speech(0.2)] * 12)
+        await session.flush()
+        events = await drain(session)
+
+    assert any(isinstance(e, ServerError) and e.code == "inference_failed" for e in events)
+    for event in events:
+        if isinstance(event, ServerTranscript):
+            assert "초안" not in event.stable, "the draft guess was committed after the failure"
+            assert not event.final or event.stable == "", (
+                "a final carried text no accurate pass produced"
+            )
