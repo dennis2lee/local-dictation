@@ -32,6 +32,13 @@ type AudioSource interface {
 	Stop() error
 }
 
+// FocusWatcher reports which window has focus, so a session can notice the
+// user clicking into a different application mid-sentence. A nil watcher
+// disables the check.
+type FocusWatcher interface {
+	Current() (string, error)
+}
+
 // Dialer opens a session socket. The controller never builds URLs itself; the
 // endpoint provider does, because in local mode it also has to start a server.
 type Dialer interface {
@@ -66,6 +73,14 @@ type Options struct {
 	Dialer   Dialer
 	Audio    AudioSource
 	Composer *input.Composer
+	// Focus, when set, is polled during a session. Dictation types into
+	// whatever has focus, so a session that outlives the window it started in
+	// would keep writing into somewhere the user did not intend.
+	Focus FocusWatcher
+	// FocusPollInterval is how often that check runs. Short enough to catch a
+	// click before a whole sentence lands in the wrong place, long enough not
+	// to matter.
+	FocusPollInterval time.Duration
 	// ClientVersion is reported to the server for support purposes.
 	ClientVersion string
 	// FinalizeTimeout bounds the wait for the final transcript after flush. On
@@ -103,6 +118,9 @@ func New(options Options) *Controller {
 	}
 	if options.Now == nil {
 		options.Now = time.Now
+	}
+	if options.FocusPollInterval == 0 {
+		options.FocusPollInterval = 400 * time.Millisecond
 	}
 	return &Controller{
 		options: options,
@@ -206,7 +224,49 @@ func (c *Controller) Start(ctx context.Context, language protocol.Language, devi
 	c.state = Listening
 	c.mu.Unlock()
 	c.publish(Update{State: Listening, Detail: "Listening", Language: language})
+
+	c.watchFocus(sessionCtx)
 	return nil
+}
+
+// watchFocus aborts the session if the user clicks into another window.
+//
+// The alternative is worse than stopping: the rest of the sentence follows the
+// cursor into whatever they clicked — a chat box, a search field, or a password
+// box. Committed text stays where it was written; only the provisional tail is
+// removed.
+func (c *Controller) watchFocus(ctx context.Context) {
+	if c.options.Focus == nil {
+		return
+	}
+	origin, err := c.options.Focus.Current()
+	if err != nil || origin == "" {
+		// Focus cannot be observed here — no permission, or an unsupported
+		// platform. Skip the check rather than aborting on every poll.
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(c.options.FocusPollInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if c.State() != Listening {
+				return
+			}
+			current, err := c.options.Focus.Current()
+			if err != nil || current == "" || current == origin {
+				continue
+			}
+			c.Abort("Dictation stopped: you moved to another window. " +
+				"Text already confirmed was kept.")
+			return
+		}
+	}()
 }
 
 // Stop finalizes: stop capturing, flush, wait for the final transcript, close.

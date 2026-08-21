@@ -98,6 +98,7 @@ func New(options Options) (*App, error) {
 		Dialer:          application.dialer,
 		Audio:           capture,
 		Composer:        application.composer,
+		Focus:           focusWatcher(),
 		ClientVersion:   options.Version,
 		FinalizeTimeout: 20 * time.Second,
 	})
@@ -242,6 +243,16 @@ func (d disabledPlatform) Close() error               { return nil }
 var _ input.Platform = disabledPlatform{}
 var _ = protocol.Korean
 var _ = widget.NewLabel
+
+// focusWatcher adapts the platform watcher to the session's interface, mapping
+// "not supported here" onto a nil watcher rather than a broken one.
+func focusWatcher() session.FocusWatcher {
+	watcher := platform.NewFocusWatcher()
+	if watcher == nil {
+		return nil
+	}
+	return watcher
+}
 
 // textAdapterAvailability reports whether text can be written at the cursor.
 func (a *App) textAdapterAvailability() (bool, string) {

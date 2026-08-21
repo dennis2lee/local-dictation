@@ -40,7 +40,7 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - uses: actions/setup-go@v5
-        with: { go-version: "1.23" }
+        with: { go-version-file: client/go.mod }
       - name: Server tests
         working-directory: server
         run: |
@@ -49,11 +49,14 @@ jobs:
           .venv/bin/python -m pytest -q
       - name: Client tests
         working-directory: client
-        # The GUI packages need X11 headers on Linux; the tests that matter are
-        # all in packages that do not.
+        # Fyne pulls in glfw, which compiles against both X11 and Wayland on
+        # Linux. Without the Wayland headers the GUI packages fail to build and
+        # the run fails on a platform the client is not even shipped for.
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq libgl1-mesa-dev xorg-dev libasound2-dev
+          sudo apt-get install -y -qq \
+            libgl1-mesa-dev xorg-dev libasound2-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols
           go test ./...
 
   server:
@@ -73,7 +76,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.23" }
+        with: { go-version-file: client/go.mod }
       - name: Build the package
         # Signing identities are optional so a fork can build without secrets.
         # Recipients of an unsigned build clear Gatekeeper by hand.
@@ -97,7 +100,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version: "1.23" }
+        with: { go-version-file: client/go.mod }
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Install WiX

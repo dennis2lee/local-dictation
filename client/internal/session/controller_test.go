@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -330,4 +331,90 @@ func TestStatesMapToTheDocumentedLEDColours(t *testing.T) {
 	if !Idle.AcceptsSettingsChanges() {
 		t.Error("settings must be editable when idle")
 	}
+}
+
+// fakeFocus lets a test move the "focused window" under a live session.
+type fakeFocus struct {
+	mu      sync.Mutex
+	current string
+	err     error
+	calls   int
+}
+
+func (f *fakeFocus) Current() (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	return f.current, f.err
+}
+
+func (f *fakeFocus) set(value string) {
+	f.mu.Lock()
+	f.current = value
+	f.mu.Unlock()
+}
+
+func (f *fakeFocus) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func TestMovingToAnotherWindowStopsDictation(t *testing.T) {
+	h := newHarness(t)
+	focus := &fakeFocus{current: "window-a"}
+	h.controller.options.Focus = focus
+	h.controller.options.FocusPollInterval = 10 * time.Millisecond
+	h.start(t)
+
+	h.session.pushTranscript(1, "kept ", "guess", false)
+	waitFor(t, func() bool { return h.platform.Document() == "kept guess" }, "text at the cursor")
+
+	// The user clicks into a different application mid-sentence.
+	focus.set("window-b")
+
+	waitFor(t, func() bool { return h.controller.State() == Idle }, "the session to stop")
+	if got := h.platform.Document(); got != "kept " {
+		t.Errorf("document = %q; committed text must survive, the guess must not", got)
+	}
+	if h.audio.Stopped() == 0 {
+		t.Error("the microphone was left running")
+	}
+}
+
+func TestStayingInTheSameWindowKeepsDictating(t *testing.T) {
+	h := newHarness(t)
+	focus := &fakeFocus{current: "window-a"}
+	h.controller.options.Focus = focus
+	h.controller.options.FocusPollInterval = 5 * time.Millisecond
+	h.start(t)
+
+	waitFor(t, func() bool { return focus.callCount() > 3 }, "the focus check to run a few times")
+	if got := h.controller.State(); got != Listening {
+		t.Fatalf("state = %v, want the session to still be listening", got)
+	}
+
+	go func() {
+		<-h.session.flushed
+		h.session.pushTranscript(1, "fine", "", true)
+	}()
+	if err := h.controller.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFocusThatCannotBeReadIsNotTreatedAsAChange(t *testing.T) {
+	h := newHarness(t)
+	// An empty identifier is what a platform without the permission returns.
+	// Aborting on it would make dictation impossible rather than safer.
+	focus := &fakeFocus{current: "", err: errors.New("no permission")}
+	h.controller.options.Focus = focus
+	h.controller.options.FocusPollInterval = 5 * time.Millisecond
+	h.start(t)
+
+	time.Sleep(40 * time.Millisecond)
+	if got := h.controller.State(); got != Listening {
+		t.Errorf("state = %v; an unreadable focus must not stop the session", got)
+	}
+	h.controller.Abort("done")
 }
