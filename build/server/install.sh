@@ -28,13 +28,22 @@ USER_MODE=0
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 info() { printf '==> %s\n' "$*"; }
 
+# Derived, not hard-coded: a line added to the header above must not silently
+# truncate the help.
+usage() {
+  local last
+  last=$(( $(grep -n '^set -euo pipefail' "$0" | head -1 | cut -d: -f1) - 2 ))
+  sed -n "3,${last}p" "$0" | sed 's/^# \{0,1\}//'
+  exit 0
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prefix)  PREFIX="${2:?}"; shift ;;
     --python)  PYTHON="${2:?}"; shift ;;
     --link)    LINK_DIR="${2:?}"; shift ;;
     --user)    USER_MODE=1 ;;
-    -h|--help) sed -n '3,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) usage ;;
     *) die "unexpected argument: $1" ;;
   esac
   shift
@@ -143,6 +152,23 @@ info "installing dependencies (this pulls ctranslate2, which takes a minute)"
 "$PREFIX/venv/bin/python" -m pip install --quiet \
   "fastapi>=0.115" "uvicorn[standard]>=0.30" "pyyaml>=6.0" "numpy>=1.26" \
   "faster-whisper>=1.0.3" "onnxruntime>=1.18"
+
+# pip exiting zero is not the same as the server being able to start. Import
+# what it actually imports, so a partial install is caught here rather than as a
+# ModuleNotFoundError traceback out of app/main.py at the operator's first
+# command. onnxruntime is reported but not required: without it the server falls
+# back to the energy voice detector rather than refusing to serve.
+info "verifying the dependencies"
+"$PREFIX/venv/bin/python" - <<'VERIFY' || die "the dependencies did not install completely; re-run this installer"
+import importlib.util
+
+required = ["fastapi", "uvicorn", "yaml", "numpy", "faster_whisper", "ctranslate2"]
+missing = [m for m in required if importlib.util.find_spec(m) is None]
+if missing:
+    raise SystemExit("cannot import: " + ", ".join(missing))
+if importlib.util.find_spec("onnxruntime") is None:
+    print("    onnxruntime is absent; the server will use the energy voice detector")
+VERIFY
 
 # The configs above were produced by sed. Load them through the same code the
 # server uses, so a rewrite that broke one is an install failure rather than a

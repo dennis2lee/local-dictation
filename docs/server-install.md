@@ -40,23 +40,56 @@ either way.
 
 ### Choosing where it goes
 
+**`--prefix` puts the whole install anywhere you can write.** Everything the
+server needs lives under that one directory — code, virtual environment, configs,
+models, logs and pid files — so a prefix is the complete unit: back it up, move
+it, delete it.
+
+```bash
+./install.sh --prefix ~/tools/local-dictation
+```
+
+```bash
+./install.sh --prefix /srv/dictation
+```
+
+Nothing is written outside it except the `local-dictation-server` symlink, which
+`--link DIR` also moves:
+
+```bash
+./install.sh --prefix ~/tools/local-dictation --link ~/bin
+```
+
+You can install several prefixes side by side — one per version, or one to try a
+new model against — as long as their configs use different ports. Every command
+then finds its own install through the wrapper at
+`<prefix>/bin-local-dictation-server`.
+
+Without `--prefix`, the default depends only on whether you used `sudo`:
+
 | | `./install.sh` | `sudo ./install.sh` | `--prefix DIR` |
 | --- | --- | --- | --- |
 | Prefix | `~/local-dictation` | `/opt/local-dictation` | `DIR` |
-| Command linked into | `~/.local/bin` | `/usr/local/bin` | as above |
-| Listens on | `127.0.0.1` | `0.0.0.0` | `127.0.0.1` unless root |
-| TLS | off | on, certificates expected | off unless root |
+| Command linked into | `~/.local/bin` | `/usr/local/bin` | the same, or `--link DIR` |
+| Listens on | `127.0.0.1` | `0.0.0.0` | `127.0.0.1` unless run as root |
+| TLS | off | on, certificates expected | off unless run as root |
 
 The generated configs point **inside the prefix you chose**, so there are no
 paths to edit before the first start. A root install hands `run/`, `log/` and
 `models/` to the user who invoked `sudo`, so the everyday commands still need no
 privileges.
 
-The two rows differ because they are different deployments. A prefix you own is a
+The columns differ because they are different deployments. A prefix you own is a
 machine talking to itself, so it binds loopback and skips TLS. A `/opt` install is
 a shared server, so it binds every interface and expects certificates. The
 combination nobody should reach by accident — open to the network with TLS off —
 takes a deliberate edit either way.
+
+The installer also builds a virtual environment under the prefix and installs the
+server's Python dependencies into it, then **imports them to confirm they are
+really there**. `pip` exiting successfully is not the same as the server being
+able to start, and a partial install that is only discovered at the first command
+shows up as a traceback rather than as something you can act on.
 
 ### What it creates
 
@@ -73,7 +106,9 @@ takes a deliberate edit either way.
 ```
 
 Re-running the installer over an existing prefix upgrades the code and leaves
-`config/` and `models/` alone. It reports each config it kept.
+`config/` and `models/` alone. It reports each config it kept — and
+`local-dictation-server update` does that for you, in the order that cannot go
+wrong. See [Updating](#updating) below.
 
 ## 2. Install a model
 
@@ -162,6 +197,62 @@ one is caught before the port opens.
 
 In the client's **Settings** tab, choose **Remote servers** and give it the host
 and the two ports.
+
+## Updating
+
+```bash
+local-dictation-server update local-dictation-server-0.1.4.tar.gz
+```
+
+That is the whole upgrade. It stops whatever is running, installs the new tree
+over the same prefix, checks the result, and starts again **exactly what was
+running** — a language you had deliberately stopped stays stopped. If the install
+or the check fails, nothing is started and the reason is printed; your configs
+and models are untouched either way.
+
+Point it at an unpacked directory instead of a tarball if you already have one:
+
+```bash
+local-dictation-server update ~/downloads/local-dictation-server-0.1.4
+```
+
+Extra arguments go through to the installer, so a non-default link directory
+survives an update:
+
+```bash
+local-dictation-server update local-dictation-server-0.1.4.tar.gz --link ~/bin
+```
+
+Afterwards, and any time you want to know whether the running processes match
+what is installed:
+
+```bash
+local-dictation-server version
+```
+
+```
+installed  0.1.4  (/home/you/local-dictation)
+ko         0.1.4  running
+en         0.1.3  running — restart it to pick up 0.1.4
+```
+
+An update needs the network, because it rebuilds the virtual environment. The
+server itself still never reaches out; only the installer does.
+
+**Coming from 0.1.2 or earlier**, which had no `update` command: run the new
+tarball's installer against your existing prefix, then check and start.
+
+```bash
+local-dictation-server stop all
+```
+
+```bash
+cd local-dictation-server-0.1.3 && ./install.sh --prefix ~/local-dictation
+```
+
+```bash
+local-dictation-server check all && local-dictation-server start all
+```
 
 ## Uninstalling
 

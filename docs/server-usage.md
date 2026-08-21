@@ -30,6 +30,7 @@ session, which is exactly what separate processes buy.
 local-dictation-server start all
 local-dictation-server status all
 local-dictation-server health all
+local-dictation-server version
 local-dictation-server logs ko --follow
 local-dictation-server restart en
 local-dictation-server stop all
@@ -38,6 +39,13 @@ local-dictation-server stop all
 `status` asks the operating system whether a process is alive. `health` asks the
 server whether it can actually transcribe — a process can be running while the
 model is still loading, and that difference is usually what you are checking.
+`version` asks a third thing: whether what is running is what is installed.
+
+```
+installed  0.1.3  (/home/you/local-dictation)
+ko         0.1.3  running
+en         0.1.2  running — restart it to pick up 0.1.3
+```
 
 `check` validates both config files and opens every file they name — the model,
 the VAD model, the certificates — without binding a port. Run it before a
@@ -67,6 +75,11 @@ which they still allow.
 | `LD_LOG_DIR` | `$LD_HOME/log` | Log files; must be writable by you |
 | `LD_BACKEND` | `whisper` | `fake` starts without a model, for plumbing checks |
 | `LD_START_TIMEOUT` | `15` | Seconds `start` watches for an early exit; `0` not to wait |
+
+`start` and `check` first confirm that `LD_PYTHON` can import what the server
+needs. An interpreter without them produces a traceback out of `app/main.py`
+that says nothing about what to do, so they say it instead: which modules are
+missing, and that re-running the installer over this prefix puts them there.
 
 ## Configuration
 
@@ -167,15 +180,27 @@ takes a deliberate edit from either starting point, which is the point.
 ## Upgrading
 
 ```bash
-local-dictation-server stop all
-tar xzf local-dictation-server-<version>.tar.gz
-cd local-dictation-server-<version> && ./install.sh --prefix <your prefix>
-local-dictation-server check all && local-dictation-server start all
-local-dictation-server health all
+local-dictation-server update local-dictation-server-<version>.tar.gz
 ```
 
+Stop, install over the same prefix, check, start again exactly what was running.
+Doing it in that order is the point of the command: installing under a live
+server leaves a process running code that is no longer on disk, and starting
+before checking starts something that cannot serve. If either the install or the
+check fails, nothing is started and the reason is printed.
+
 The installer never overwrites a config you have edited; it reports that it kept
-yours. Models are untouched.
+yours. Models are untouched. A language you had deliberately stopped stays
+stopped.
+
+Then confirm the running processes caught up:
+
+```bash
+local-dictation-server version
+```
+
+Full detail, including how to upgrade from a version that predates this command,
+is in [server-install.md](server-install.md#updating).
 
 ## When something goes wrong
 
