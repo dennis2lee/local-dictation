@@ -74,6 +74,11 @@ type settingsTab struct {
 	// offered is the last check's result, which the download button acts on.
 	// Both live on the Fyne goroutine and nothing else reads it.
 	offered update.Result
+	// Two seams, and only tests move them: where a check goes, and whether the
+	// work happens on another goroutine. A test that has to poll a widget for
+	// a background goroutine's answer is a test that races with it.
+	newSource  func(config.Config) update.Source
+	background func(func())
 
 	saveButton *widget.Button
 	message    *widget.Label
@@ -422,6 +427,9 @@ func (s *settingsTab) buildUpdateSection(settings config.Config) fyne.CanvasObje
 // meant everyone installing from the published packages had an update feature
 // whose only output was that it was not configured.
 func (s *settingsTab) updateSource(settings config.Config) update.Source {
+	if s.newSource != nil {
+		return s.newSource(settings)
+	}
 	return update.SourceFor(
 		settings.Update.ManifestURL,
 		settings.Update.PublicKey,
@@ -436,7 +444,7 @@ func (s *settingsTab) onCheckUpdate() {
 	s.updateButton.Disable()
 	s.downloadButton.Hide()
 
-	go func() {
+	s.away(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		result, err := source.Check(ctx)
@@ -456,7 +464,7 @@ func (s *settingsTab) onCheckUpdate() {
 					"Local Dictation %s is the newest release.", result.Current))
 			}
 		})
-	}()
+	})
 }
 
 // onDownloadUpdate fetches the installer and stops. Running it is the user's
@@ -468,7 +476,7 @@ func (s *settingsTab) onDownloadUpdate() {
 	s.downloadButton.Disable()
 	s.updateStatus.SetText(fmt.Sprintf("Downloading %s…", installerName(offered.Artifact.URL)))
 
-	go func() {
+	s.away(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
 		saved, err := update.Download(ctx, offered.Artifact, downloadDir(s.app.options.StateDir), nil)
@@ -485,7 +493,16 @@ func (s *settingsTab) onDownloadUpdate() {
 				"Saved to %s.\nQuit Local Dictation and open it to install %s.",
 				saved, offered.Available))
 		})
-	}()
+	})
+}
+
+// away runs the network part of an update off the Fyne goroutine.
+func (s *settingsTab) away(work func()) {
+	if s.background != nil {
+		s.background(work)
+		return
+	}
+	go work()
 }
 
 // offerText is what the window says about a release it found.

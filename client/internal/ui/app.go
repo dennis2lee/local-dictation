@@ -153,7 +153,23 @@ func (a *App) buildWindow() {
 
 // Run shows the window and blocks until the app quits.
 func (a *App) Run() {
+	a.checkForUpdatesOnStart()
 	a.window.ShowAndRun()
+}
+
+// checkForUpdatesOnStart honours update.check_on_start, which until now was a
+// settings field that did nothing at all. It stays off by default — a
+// dictation tool should not make a network call nobody asked for — and when it
+// is on the answer is waiting in Settings by the time anyone opens the tab.
+//
+// Called before ShowAndRun, from the main goroutine, where fyne.Do runs the
+// function inline rather than queueing it. The network part is a goroutine of
+// its own either way.
+func (a *App) checkForUpdatesOnStart() {
+	if !a.Settings().Update.CheckOnStart {
+		return
+	}
+	fyne.Do(a.settingsTab.onCheckUpdate)
 }
 
 // Quit tears everything down in the order that loses the least text.

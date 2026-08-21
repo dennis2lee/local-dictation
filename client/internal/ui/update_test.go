@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -132,5 +133,117 @@ func TestAnInstallerIsNamedByItsFile(t *testing.T) {
 	}
 	if got := installerName(""); got == "" {
 		t.Error("an empty URL produced an empty name, which reads as a truncated sentence")
+	}
+}
+
+// stubSource stands in for github.com so no test reaches the network.
+type stubSource struct {
+	result update.Result
+	err    error
+	asked  int
+}
+
+func (s *stubSource) Check(context.Context) (update.Result, error) {
+	s.asked++
+	return s.result, s.err
+}
+
+func (s *stubSource) Describe() string { return "the test source" }
+
+// checkedTab wires a tab to a stub source and runs the "background" work
+// inline, so a test never has to poll a widget another goroutine is writing.
+func checkedTab(t *testing.T, source update.Source) *settingsTab {
+	t.Helper()
+	settings := testSettings()
+	tab := &settingsTab{
+		app:        appAtVersion(settings, "0.1.10"),
+		newSource:  func(config.Config) update.Source { return source },
+		background: func(work func()) { work() },
+	}
+	tab.buildUpdateSection(settings)
+	return tab
+}
+
+func TestANewerReleaseIsOfferedAsADownload(t *testing.T) {
+	tab := checkedTab(t, &stubSource{result: update.Result{
+		Current:   "0.1.10",
+		Available: "0.2.0",
+		Newer:     true,
+		Page:      "https://github.com/dennis2lee/local-dictation/releases/tag/v0.2.0",
+		Artifact: update.Artifact{
+			URL:    "https://github.com/o/r/releases/download/v0.2.0/LocalDictation-0.2.0.pkg",
+			SHA256: "abc",
+			Size:   25_341_952,
+		},
+	}})
+
+	tab.onCheckUpdate()
+
+	if !tab.downloadButton.Visible() {
+		t.Fatal("a newer release was found and no download was offered")
+	}
+	if !strings.Contains(tab.downloadButton.Text, "24.2 MB") {
+		t.Errorf("download button reads %q, want the size in it", tab.downloadButton.Text)
+	}
+	if !strings.Contains(tab.updateStatus.Text, "0.2.0") {
+		t.Errorf("status reads %q, want the new version named", tab.updateStatus.Text)
+	}
+	if tab.updateButton.Disabled() {
+		t.Error("the check button was left disabled after the check finished")
+	}
+}
+
+func TestAnUpToDateClientIsToldSo(t *testing.T) {
+	tab := checkedTab(t, &stubSource{result: update.Result{Current: "0.1.10"}})
+
+	tab.onCheckUpdate()
+
+	if tab.downloadButton.Visible() {
+		t.Error("a download was offered for a version already installed")
+	}
+	if !strings.Contains(tab.updateStatus.Text, "newest") {
+		t.Errorf("status reads %q", tab.updateStatus.Text)
+	}
+}
+
+// A check that cannot reach anywhere must leave the button pressable — the
+// usual cause is a network that will be back in a minute.
+func TestAFailedCheckSaysWhyAndCanBeRetried(t *testing.T) {
+	tab := checkedTab(t, &stubSource{err: update.ErrRateLimited})
+
+	tab.onCheckUpdate()
+
+	if tab.updateButton.Disabled() {
+		t.Error("a failed check left the button disabled, so it cannot be retried")
+	}
+	if !strings.Contains(tab.updateStatus.Text, "rate-limiting") {
+		t.Errorf("status reads %q, want the reason", tab.updateStatus.Text)
+	}
+}
+
+// check_on_start was a settings field that nothing read.
+func TestCheckOnStartActuallyChecks(t *testing.T) {
+	source := &stubSource{result: update.Result{Current: "0.1.10"}}
+
+	settings := testSettings()
+	settings.Update.CheckOnStart = false
+	app := appAtVersion(settings, "0.1.10")
+	app.settingsTab = &settingsTab{
+		app:        app,
+		newSource:  func(config.Config) update.Source { return source },
+		background: func(work func()) { work() },
+	}
+	app.settingsTab.buildUpdateSection(settings)
+
+	app.checkForUpdatesOnStart()
+	if source.asked != 0 {
+		t.Fatalf("a check ran %d times with check_on_start off", source.asked)
+	}
+
+	settings.Update.CheckOnStart = true
+	app.settings = settings
+	app.checkForUpdatesOnStart()
+	if source.asked != 1 {
+		t.Fatalf("check_on_start asked %d times, want 1", source.asked)
 	}
 }
