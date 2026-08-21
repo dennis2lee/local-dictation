@@ -12,6 +12,7 @@ import logging
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 
@@ -69,6 +70,54 @@ def create_app(settings: Settings, *, backend: str = "whisper") -> FastAPI:
     app.include_router(health_router)
     app.include_router(websocket_router)
     return app
+
+
+def preflight(settings: Settings, *, backend: str) -> tuple[list[str], list[str]]:
+    """Check what a config file can only claim: that the files it names exist.
+
+    `Settings.validate` cannot do this. It runs on every startup and throughout
+    the tests, where the paths are fixtures rather than installed files. But an
+    operator running `--check` before a restart is asking exactly this question,
+    and a check that answers "ok" for a model directory that is not there is
+    worse than no check at all.
+
+    Returns (problems, warnings). A problem stops the server from serving; a
+    warning is something it recovers from but an operator should know about.
+    """
+    problems: list[str] = []
+    warnings: list[str] = []
+
+    if backend != "fake":
+        model = Path(settings.model.path)
+        if not model.is_dir():
+            problems.append(f"model.path is not a directory: {model}")
+        elif not (model / "model.bin").is_file():
+            problems.append(f"model.path holds no model.bin: {model}")
+
+        if settings.model.draft_path:
+            draft = Path(settings.model.draft_path)
+            if not (draft / "model.bin").is_file():
+                problems.append(f"model.draft_path holds no model.bin: {draft}")
+
+    for label, path in (
+        ("security.tls_certificate", settings.security.tls_certificate),
+        ("security.tls_private_key", settings.security.tls_private_key),
+        ("security.client_ca", settings.security.client_ca),
+    ):
+        if path and not Path(path).is_file():
+            problems.append(f"{label} is not readable: {path}")
+
+    # Not a problem: the server logs this and falls back to the energy detector
+    # rather than refusing to serve. Still worth saying out loud.
+    if settings.streaming.vad == "silero" and settings.streaming.silero_model_path:
+        silero = Path(settings.streaming.silero_model_path)
+        if not silero.is_file():
+            warnings.append(
+                f"streaming.silero_model_path is not readable: {silero} "
+                "— the server will fall back to the energy detector"
+            )
+
+    return problems, warnings
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -134,9 +183,18 @@ def cli(argv: list[str] | None = None) -> int:
         )
 
     if args.check:
+        problems, warnings = preflight(settings, backend=args.backend)
+        where = f"{settings.language} on {settings.server.host}:{settings.server.port}"
+        for warning in warnings:
+            print(f"warning: {warning}", file=sys.stderr)
+        if problems:
+            print(f"FAILED: {where} would not serve:", file=sys.stderr)
+            for problem in problems:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
         print(
-            f"ok: {settings.language} on {settings.server.host}:{settings.server.port}, "
-            f"model={settings.model.path}, max_sessions={settings.limits.max_sessions}"
+            f"ok: {where}, model={settings.model.path}, "
+            f"max_sessions={settings.limits.max_sessions}"
         )
         return 0
 
