@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><style>
+body { font: 13px -apple-system, sans-serif; margin: 16px; color: #1f2937; }
+h2 { font-size: 15px; margin: 14px 0 6px; }
+pre { background: #111827; color: #e5e7eb; padding: 10px; border-radius: 5px;
+      font: 11px ui-monospace, Menlo, monospace; overflow-x: auto; }
+code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; }
+</style></head><body>
+<h2>1. Install a speech model</h2>
+<p>Open Terminal and run one of these. <code>large-v3-turbo</code> is the
+recommended starting point on a CPU: 1.5 GB, and several times faster than the
+full model.</p>
+<pre>"/Applications/Local Dictation.app/Contents/Resources/server/scripts/fetch-model.sh" \
+  large-v3-turbo --dest ~/Library/Application\ Support/LocalDictation/models</pre>
+<p>For the most accurate model instead, use <code>large-v3</code> (2.9 GB).</p>
+
+<h2>2. Allow Local Dictation to type for you</h2>
+<p>Open <b>System Settings &rsaquo; Privacy &amp; Security &rsaquo;
+Accessibility</b> and turn on Local Dictation. Without it the shortcut cannot be
+registered and text cannot be written at your cursor.</p>
+
+<h2>3. Check everything is ready</h2>
+<pre>"/Applications/Local Dictation.app/Contents/MacOS/local-dictation" --check</pre>
+<p>It prints one line per prerequisite and names whatever is missing.</p>
+
+<h2>4. Dictate</h2>
+<p>Open Local Dictation, put your cursor where you want the text, and press
+<b>Control-Shift-M</b>. Press it again to stop.</p>
+</body></html>
