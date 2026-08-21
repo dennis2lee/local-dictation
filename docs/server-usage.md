@@ -145,19 +145,24 @@ the server logs a warning at startup when it happens.
 
 ## Security
 
-The shipped configs assume a closed network and start from the strict end:
+The installer writes the posture that matches where it installed: a prefix you
+own gets `127.0.0.1` with TLS off, a `sudo` install into `/opt` gets `0.0.0.0`
+with TLS on and client certificates required. Neither is a default you should
+leave unexamined once other machines depend on it.
+
+For a server people connect to:
 
 - **TLS** with your internal CA, and `require_client_certificate: true` so only
   managed machines can connect. Both are all-or-nothing — a half-configured
   listener is worse than a plain one, because operators assume it is encrypted,
-  so the server refuses to start on a partial TLS config.
+  so the server refuses to start on a partial TLS config. `check` reads the
+  certificate files, so run it before the restart.
 - **No egress.** The server never fetches anything. Block outbound traffic and
   nothing breaks.
 - **Two inbound ports** and the health paths. Nothing else needs to be open.
 
-For a first bring-up on a trusted network you can set the TLS fields to `null`
-and `require_client_certificate` to `false`. Turn them back on before anyone
-relies on it.
+The pairing that should never happen by accident is `0.0.0.0` with TLS off. It
+takes a deliberate edit from either starting point, which is the point.
 
 ## Upgrading
 
