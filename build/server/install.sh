@@ -110,7 +110,27 @@ fi
 # app/ holds the Python package; the management script expects `app` directly
 # under LD_APP_DIR.
 cp -R "$HERE/app" "$PREFIX/app/"
-cp -R "$HERE/scripts" "$PREFIX/app/"
+
+# The scripts go in by rename, not by being overwritten in place.
+#
+# `local-dictation-server update` is very often running one of these files at
+# this exact moment, and bash reads the script it is executing in chunks,
+# remembering a byte offset. Truncating and rewriting that file underneath it
+# makes it resume inside whatever now occupies that offset — which is how a
+# successful update ended with "k: command not found". A rename gives the new
+# content a new inode and leaves the running one whole to the end.
+#
+# The version doing the running cannot fix this for itself; the version doing
+# the installing can. So this protects every older release too.
+mkdir -p "$PREFIX/app/scripts"
+for source in "$HERE/scripts/"*; do
+  [[ -f "$source" ]] || continue
+  target="$PREFIX/app/scripts/$(basename "$source")"
+  staged="$(mktemp "$target.XXXXXX")"     # same directory, so mv is a rename
+  cat "$source" > "$staged"
+  chmod +x "$staged"
+  mv -f "$staged" "$target"
+done
 cp "$HERE/pyproject.toml" "$PREFIX/app/"
 [[ -d "$HERE/protocol" ]] && cp -R "$HERE/protocol" "$PREFIX/app/"
 [[ -d "$HERE/docs" ]] && cp -R "$HERE/docs" "$PREFIX/"

@@ -312,8 +312,10 @@ Then confirm the running processes caught up:
 local-dictation-server version
 ```
 
-Full detail, including how to upgrade from a version that predates this command,
-is in [server-install.md](server-install.md#updating).
+A version older than 0.1.5 cannot fetch its own successor — it does not have the
+code that does it. That first hop is one manual step, in
+[server-install.md](server-install.md#the-first-hop), along with the rest of the
+detail.
 
 ## When something goes wrong
 

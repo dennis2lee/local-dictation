@@ -269,20 +269,44 @@ en         0.1.3  running — restart it to pick up 0.1.4
 An update needs the network, because it rebuilds the virtual environment. The
 server itself still never reaches out; only the installer does.
 
-**Coming from 0.1.2 or earlier**, which had no `update` command: run the new
-tarball's installer against your existing prefix, then check and start.
+### The first hop
+
+A command that fetches its own successor has to already be installed, so getting
+onto it takes one manual step. `local-dictation-server version` says where you
+are.
+
+**On 0.1.3 or 0.1.4** — `update` exists but needs to be told what to install.
+Download the tarball, then hand it over; every update after this one needs no
+argument.
+
+```bash
+curl -fL -O https://github.com/dennis2lee/local-dictation/releases/latest/download/local-dictation-server-0.1.6.tar.gz
+```
+
+```bash
+local-dictation-server update ./local-dictation-server-0.1.6.tar.gz
+```
+
+**On 0.1.2 or earlier** — there is no `update` at all. Run the new tarball's
+installer against your existing prefix instead, then check and start.
 
 ```bash
 local-dictation-server stop all
 ```
 
 ```bash
-cd local-dictation-server-0.1.3 && ./install.sh --prefix ~/local-dictation
+tar xzf local-dictation-server-0.1.6.tar.gz
+```
+
+```bash
+cd local-dictation-server-0.1.6 && ./install.sh --prefix ~/local-dictation
 ```
 
 ```bash
 local-dictation-server check all && local-dictation-server start all
 ```
+
+Either way your configs and models are kept.
 
 ## Uninstalling
 
