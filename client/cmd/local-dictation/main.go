@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"time"
 
 	"github.com/dennis2lee/local-dictation/client/internal/audio"
@@ -24,7 +25,7 @@ import (
 // version is stamped at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.1.8"
+var version = "0.1.9"
 
 func main() {
 	var (
@@ -50,16 +51,59 @@ func main() {
 		os.Exit(runCheck(settings, path))
 	}
 
+	// From here on there may be nowhere for a failure to appear. The Windows
+	// build is linked with -H=windowsgui and has no console at all; a macOS
+	// bundle opened from Finder has no terminal either. A crash on the way to
+	// the first window is then indistinguishable from nothing happening, which
+	// is precisely how this app shipped eight releases unable to start.
+	diagnostics := openDiagnosticLog(stateDir)
+	if diagnostics != nil {
+		defer diagnostics.Close()
+		defer func() {
+			if problem := recover(); problem != nil {
+				fmt.Fprintf(diagnostics, "%s panic: %v\n\n%s\n",
+					time.Now().Format(time.RFC3339), problem, debug.Stack())
+				_ = diagnostics.Sync()
+				panic(problem) // still crash, and still say so on a console if there is one
+			}
+		}()
+		fmt.Fprintf(diagnostics, "%s starting %s\n", time.Now().Format(time.RFC3339), version)
+	}
+
 	application, err := ui.New(ui.Options{
 		Version:  version,
 		Settings: settings,
 		StateDir: stateDir,
 	})
 	if err != nil {
+		reportStartupFailure(diagnostics, err)
 		fail(err)
 	}
 	defer application.Quit()
 	application.Run()
+}
+
+// openDiagnosticLog returns the file startup problems are recorded in, or nil
+// if it cannot be opened — in which case the app still runs. It is truncated
+// each launch: this answers "why did nothing happen just now", not "what has
+// this machine been doing".
+func openDiagnosticLog(stateDir string) *os.File {
+	if stateDir == "" {
+		return nil
+	}
+	file, err := os.Create(filepath.Join(stateDir, "startup.log"))
+	if err != nil {
+		return nil
+	}
+	return file
+}
+
+func reportStartupFailure(diagnostics *os.File, err error) {
+	if diagnostics == nil {
+		return
+	}
+	fmt.Fprintf(diagnostics, "%s could not start: %v\n", time.Now().Format(time.RFC3339), err)
+	_ = diagnostics.Sync()
 }
 
 func loadSettings(configPath string) (config.Config, string, error) {
@@ -107,7 +151,10 @@ func runCheck(settings config.Config, settingsPath string) int {
 	fmt.Printf("Local Dictation %s\n", version)
 	// The real path, not the default one: a diagnostic that reports a file it
 	// did not read is worse than no diagnostic.
-	fmt.Printf("settings: %s\n\n", settingsPath)
+	fmt.Printf("settings: %s\n", settingsPath)
+	// Worth printing even when everything passes: it is the file to ask for
+	// when someone reports that the app does nothing at all.
+	fmt.Printf("startup log: %s\n\n", filepath.Join(filepath.Dir(settingsPath), "startup.log"))
 
 	if err := settings.Validate(); err != nil {
 		report("settings", false, err.Error())

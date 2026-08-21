@@ -117,6 +117,28 @@ refused outright, not reported as a warning.
 
 ## When something goes wrong
 
+### The app does not open at all
+
+Nothing appears, or a window flashes and is gone. There is no console to read on
+Windows — the app is built without one — so the reason goes to a file instead:
+
+| | |
+| --- | --- |
+| **macOS** | `~/Library/Application Support/LocalDictation/startup.log` |
+| **Windows** | `%APPDATA%\LocalDictation\startup.log` |
+
+It is rewritten each launch and holds one line per start, plus the full stack of
+anything that went wrong on the way to the first window. `--check` prints its
+path, and works even when the window does not:
+
+```bash
+"/Applications/Local Dictation.app/Contents/MacOS/local-dictation" --check
+```
+
+```powershell
+& "C:\Program Files\Local Dictation\local-dictation.exe" --check
+```
+
 ### The shortcut does nothing
 
 Run the self-check:
