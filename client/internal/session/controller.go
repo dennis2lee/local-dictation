@@ -45,11 +45,12 @@ type Dialer interface {
 	Dial(ctx context.Context, language protocol.Language, progress func(string)) (Session, error)
 }
 
-// Session is one live server connection.
+// Session is one live server connection. (The transport also offers a flush
+// that keeps the connection open; the controller has no use for it — a stop
+// both flushes and ends the session.)
 type Session interface {
 	SendStart(ctx context.Context, start protocol.Start) error
 	SendAudio(ctx context.Context, pcm []byte) error
-	SendFlush(ctx context.Context) error
 	SendStop(ctx context.Context) error
 	Events() <-chan protocol.ServerEvent
 	Err() error
@@ -101,12 +102,11 @@ type Controller struct {
 	deviceID string
 	session  Session
 	cancel   context.CancelFunc
+	// finished closes once every inbound event has been applied and the
+	// connection is over. Stop waits on it: `stop` makes the server flush,
+	// deliver the final transcript and close, so the connection ending is the
+	// one signal that arrives whether or not the utterance had anything to say.
 	finished chan struct{}
-	// finals carries one token per final transcript. Stop waits on it rather
-	// than on the socket closing: after a flush the server sends the final
-	// transcript and keeps the session open, so waiting for the connection to
-	// end would burn the whole finalize timeout every single time.
-	finals chan struct{}
 
 	updates chan Update
 }
@@ -167,8 +167,7 @@ func (c *Controller) Start(ctx context.Context, language protocol.Language, devi
 	sessionCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	c.cancel = cancel
 	c.finished = make(chan struct{})
-	c.finals = make(chan struct{}, 1)
-	finished, finals := c.finished, c.finals
+	finished := c.finished
 	c.mu.Unlock()
 
 	c.publish(Update{State: Connecting, Detail: "Connecting…", Language: language})
@@ -207,7 +206,7 @@ func (c *Controller) Start(ctx context.Context, language protocol.Language, devi
 	c.session = session
 	c.mu.Unlock()
 
-	go c.consume(sessionCtx, session, language, finished, finals)
+	go c.consume(sessionCtx, session, language, finished)
 
 	if err := c.options.Audio.Start(deviceID, func(frame []byte) {
 		// Best effort: a dropped frame costs a syllable, a blocked callback
@@ -269,7 +268,8 @@ func (c *Controller) watchFocus(ctx context.Context) {
 	}()
 }
 
-// Stop finalizes: stop capturing, flush, wait for the final transcript, close.
+// Stop finalizes: stop capturing, ask the server to stop, and wait until every
+// event — the final transcript included — has been applied at the cursor.
 func (c *Controller) Stop(ctx context.Context) error {
 	c.mu.Lock()
 	if c.state != Listening {
@@ -277,46 +277,43 @@ func (c *Controller) Stop(ctx context.Context) error {
 		return ErrBusy
 	}
 	c.state = Finalizing
-	session, cancel, finished, finals, language := c.session, c.cancel, c.finished, c.finals, c.language
+	session, cancel, finished, language := c.session, c.cancel, c.finished, c.language
 	c.mu.Unlock()
-
-	// Discard finals from utterances the user already saw complete; only one
-	// that arrives after the flush below ends this wait.
-	select {
-	case <-finals:
-	default:
-	}
 
 	c.publish(Update{State: Finalizing, Detail: "Finishing the sentence…", Language: language})
 
 	// Order matters: stop the microphone first so no audio arrives after the
-	// flush, which the server would ignore anyway.
+	// stop, which the server would ignore anyway.
 	if err := c.options.Audio.Stop(); err != nil {
 		c.publish(Update{State: Finalizing, Detail: fmt.Sprintf("microphone: %v", err), Language: language})
 	}
 
-	flushCtx, flushCancel := context.WithTimeout(ctx, c.options.FinalizeTimeout)
-	defer flushCancel()
+	stopCtx, stopCancel := context.WithTimeout(ctx, c.options.FinalizeTimeout)
+	defer stopCancel()
 
-	if err := session.SendFlush(flushCtx); err != nil {
-		cancel()
+	// `stop` makes the server flush, deliver the final transcript and close
+	// the connection. Waiting for the connection to end — rather than for a
+	// final event that an empty or failed utterance never produces — is what
+	// keeps a no-speech stop instant instead of burning the finalize timeout.
+	if err := session.SendStop(stopCtx); err != nil {
+		session.CloseNow() // unblocks consume, so the wait below cannot hang
 		<-finished
-		c.finish(session, language, fmt.Errorf("could not flush: %w", err))
+		cancel()
+		c.finish(session, language, fmt.Errorf("could not stop the session: %w", err))
 		return err
 	}
 
 	select {
-	case <-finals:
-	case <-finished: // the socket ended first
-	case <-flushCtx.Done():
+	case <-finished:
+	case <-stopCtx.Done():
 		c.publish(Update{
 			State:    Finalizing,
 			Detail:   "The server did not finish in time; keeping what was confirmed.",
 			Language: language,
 		})
+		session.CloseNow()
 	}
 
-	_ = session.SendStop(context.WithoutCancel(ctx))
 	cancel()
 	c.finish(session, language, nil)
 	return nil
@@ -350,7 +347,7 @@ func (c *Controller) Abort(reason string) {
 }
 
 // consume applies inbound events until the session ends.
-func (c *Controller) consume(ctx context.Context, session Session, language protocol.Language, finished, finals chan struct{}) {
+func (c *Controller) consume(ctx context.Context, session Session, language protocol.Language, finished chan struct{}) {
 	defer close(finished)
 
 	for event := range session.Events() {
@@ -363,14 +360,6 @@ func (c *Controller) consume(ctx context.Context, session Session, language prot
 					Err:      err,
 					Language: language,
 				})
-			}
-			if event.Transcript.Final {
-				// One token per finalized utterance, non-blocking so a session
-				// with many pauses does not stall on a Stop that never came.
-				select {
-				case finals <- struct{}{}:
-				default:
-				}
 			}
 
 		case event.Error != nil:

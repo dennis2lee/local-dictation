@@ -76,8 +76,9 @@ func TestStatesFollowTheDocumentedSequence(t *testing.T) {
 	}
 
 	go func() {
-		<-h.session.flushed
+		<-h.session.stopped
 		h.session.pushTranscript(1, "오늘 오후 세 시에", "", true)
+		h.session.pushClosed()
 	}()
 
 	if err := h.controller.Stop(context.Background()); err != nil {
@@ -94,22 +95,23 @@ func TestStatesFollowTheDocumentedSequence(t *testing.T) {
 	}
 }
 
-func TestTheMicrophoneStopsBeforeTheFlush(t *testing.T) {
+func TestTheMicrophoneStopsBeforeTheStopIsSent(t *testing.T) {
 	h := newHarness(t)
 	h.start(t)
 
-	capturingAtFlush := make(chan bool, 1)
+	capturingAtStop := make(chan bool, 1)
 	go func() {
-		<-h.session.flushed
-		capturingAtFlush <- h.audio.Capturing()
+		<-h.session.stopped
+		capturingAtStop <- h.audio.Capturing()
 		h.session.pushTranscript(1, "done", "", true)
+		h.session.pushClosed()
 	}()
 
 	if err := h.controller.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if <-capturingAtFlush {
-		t.Error("still capturing when flush was sent; audio after flush is discarded by the server")
+	if <-capturingAtStop {
+		t.Error("still capturing when stop was sent; audio after the flush is discarded by the server")
 	}
 }
 
@@ -124,8 +126,9 @@ func TestAudioFramesReachTheServer(t *testing.T) {
 	waitFor(t, func() bool { return h.session.AudioBytes() == 10*len(frame) }, "audio frames")
 
 	go func() {
-		<-h.session.flushed
+		<-h.session.stopped
 		h.session.pushTranscript(1, "x", "", true)
+		h.session.pushClosed()
 	}()
 	_ = h.controller.Stop(context.Background())
 }
@@ -141,8 +144,9 @@ func TestTranscriptsLandAtTheCursorWhileListening(t *testing.T) {
 	waitFor(t, func() bool { return h.platform.Document() == "오늘 오후" }, "second partial")
 
 	go func() {
-		<-h.session.flushed
+		<-h.session.stopped
 		h.session.pushTranscript(3, "오늘 오후", "", true)
+		h.session.pushClosed()
 	}()
 	if err := h.controller.Stop(context.Background()); err != nil {
 		t.Fatal(err)
@@ -178,8 +182,9 @@ func TestToggleStartsThenStops(t *testing.T) {
 	}
 
 	go func() {
-		<-h.session.flushed
+		<-h.session.stopped
 		h.session.pushTranscript(1, "hi", "", true)
+		h.session.pushClosed()
 	}()
 	if err := h.controller.Toggle(context.Background(), protocol.Korean, ""); err != nil {
 		t.Fatal(err)
@@ -395,8 +400,9 @@ func TestStayingInTheSameWindowKeepsDictating(t *testing.T) {
 	}
 
 	go func() {
-		<-h.session.flushed
+		<-h.session.stopped
 		h.session.pushTranscript(1, "fine", "", true)
+		h.session.pushClosed()
 	}()
 	if err := h.controller.Stop(context.Background()); err != nil {
 		t.Fatal(err)
@@ -417,4 +423,53 @@ func TestFocusThatCannotBeReadIsNotTreatedAsAChange(t *testing.T) {
 		t.Errorf("state = %v; an unreadable focus must not stop the session", got)
 	}
 	h.controller.Abort("done")
+}
+
+func TestStopWithNothingSpokenIsInstant(t *testing.T) {
+	// The regression: an utterance with nothing to say produces no final
+	// transcript, and a Stop that waited for one burned the whole finalize
+	// timeout while the UI sat on "Finishing the sentence…".
+	h := newHarness(t)
+	h.controller.options.FinalizeTimeout = 5 * time.Second
+	h.start(t)
+
+	go func() {
+		<-h.session.stopped
+		h.session.pushClosed() // the server flushes silence: no final, just closed
+	}()
+
+	start := time.Now()
+	if err := h.controller.Stop(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Stop of an empty utterance took %s; it must not wait for a final that never comes", elapsed)
+	}
+	if got := h.controller.State(); got != Idle {
+		t.Errorf("state = %v, want Idle", got)
+	}
+	if got := h.platform.Document(); got != "" {
+		t.Errorf("document = %q, want empty", got)
+	}
+}
+
+func TestStopDoesNotHangWhenTheStopCannotBeSent(t *testing.T) {
+	// The regression: a failed send left Stop waiting on a consume goroutine
+	// that nothing was going to unblock.
+	h := newHarness(t)
+	h.controller.options.FinalizeTimeout = 5 * time.Second
+	h.session.stopErr = errors.New("broken pipe")
+	h.start(t)
+
+	start := time.Now()
+	err := h.controller.Stop(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "broken pipe") {
+		t.Fatalf("err = %v, want the send failure", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Stop took %s after a failed send", elapsed)
+	}
+	if got := h.controller.State(); got != Error {
+		t.Errorf("state = %v, want Error", got)
+	}
 }

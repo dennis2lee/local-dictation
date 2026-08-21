@@ -16,12 +16,10 @@ type fakeSession struct {
 	closed bool
 
 	startErr error
-	flushErr error
+	stopErr  error
 	err      error
 
-	flushed   chan struct{}
 	stopped   chan struct{}
-	flushOnce sync.Once
 	stopOnce  sync.Once
 	closeOnce sync.Once
 }
@@ -29,7 +27,6 @@ type fakeSession struct {
 func newFakeSession() *fakeSession {
 	return &fakeSession{
 		events:  make(chan protocol.ServerEvent, 64),
-		flushed: make(chan struct{}),
 		stopped: make(chan struct{}),
 	}
 }
@@ -43,14 +40,9 @@ func (f *fakeSession) SendAudio(_ context.Context, pcm []byte) error {
 	return nil
 }
 
-func (f *fakeSession) SendFlush(context.Context) error {
-	f.flushOnce.Do(func() { close(f.flushed) })
-	return f.flushErr
-}
-
 func (f *fakeSession) SendStop(context.Context) error {
 	f.stopOnce.Do(func() { close(f.stopped) })
-	return nil
+	return f.stopErr
 }
 
 func (f *fakeSession) Events() <-chan protocol.ServerEvent { return f.events }
@@ -91,6 +83,14 @@ func (f *fakeSession) pushTranscript(revision int64, stable, partial string, fin
 	f.push(protocol.ServerEvent{Transcript: &protocol.Transcript{
 		Type: "transcript", ProtocolVersion: 1, UtteranceID: "u-1",
 		Revision: revision, Stable: stable, Partial: partial, Final: final,
+	}})
+}
+
+// pushClosed mimics the server ending the session after a stop: the `closed`
+// event arrives and then the connection is gone.
+func (f *fakeSession) pushClosed() {
+	f.push(protocol.ServerEvent{Closed: &protocol.Closed{
+		Type: "closed", ProtocolVersion: 1, Reason: "client_stop",
 	}})
 }
 
