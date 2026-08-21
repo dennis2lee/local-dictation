@@ -110,7 +110,17 @@ func New(options Options) (*App, error) {
 }
 
 func (a *App) buildWindow() {
-	a.window = a.fyne.NewWindow("Local Dictation")
+	// Set on the app before the window exists: Fyne hands the app icon to the
+	// window, the tray and the taskbar, and a window created first would keep
+	// the toolkit's default in its title bar.
+	if icon := appIcon(); icon != nil {
+		a.fyne.SetIcon(icon)
+	}
+
+	a.window = a.fyne.NewWindow(windowTitle(a.options.Version))
+	if icon := appIcon(); icon != nil {
+		a.window.SetIcon(icon)
+	}
 	a.window.Resize(fyne.NewSize(560, 620))
 	a.window.SetCloseIntercept(func() {
 		// Closing the window keeps dictation available from the tray, which is
@@ -288,4 +298,13 @@ func (a *App) textAdapterAvailability() (bool, string) {
 		return false, a.textAdapterErr.Error()
 	}
 	return platform.Available()
+}
+
+// windowTitle carries the version, so a screenshot or a support conversation
+// says which build it is without anyone opening a menu.
+func windowTitle(version string) string {
+	if version == "" {
+		return "Local Dictation"
+	}
+	return "Local Dictation " + version
 }
