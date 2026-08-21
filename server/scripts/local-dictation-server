@@ -23,6 +23,8 @@
 #   LD_LOG_DIR     log files                    (default: $LD_HOME/log)
 #   LD_BACKEND     inference backend            (default: whisper; "fake" loads
 #                  no model and emits scripted text — for plumbing checks only)
+#   LD_START_TIMEOUT  seconds `start` watches a new process for an early exit
+#                  before handing back; 0 to not wait at all (default: 15)
 
 set -euo pipefail
 
@@ -33,10 +35,14 @@ LD_RUN_DIR="${LD_RUN_DIR:-$LD_HOME/run}"
 LD_LOG_DIR="${LD_LOG_DIR:-$LD_HOME/log}"
 LD_PYTHON="${LD_PYTHON:-$LD_HOME/venv/bin/python}"
 LD_BACKEND="${LD_BACKEND:-whisper}"
+LD_START_TIMEOUT="${LD_START_TIMEOUT:-15}"
 
 LANGUAGES=(ko en)
 
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+# One language failing must not take the other down with it: `start all`
+# should still try English when Korean cannot start. for_each counts these.
+fail() { printf 'error: %s\n' "$*" >&2; return 1; }
 info() { printf '%s\n' "$*"; }
 
 usage() { sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
@@ -88,15 +94,25 @@ running() {
 }
 
 do_start() {
-  local lang="$1"
+  local lang="$1" pid dir
   if running "$lang"; then
     info "$lang: already running (pid $(cat "$(pid_for "$lang")"))"
     return 0
   fi
   require_python
   [[ -d "$LD_APP_DIR/app" ]] || die "app package not found under $LD_APP_DIR (set LD_APP_DIR)"
-  mkdir -p "$LD_RUN_DIR" "$LD_LOG_DIR"
 
+  mkdir -p "$LD_RUN_DIR" "$LD_LOG_DIR" 2>/dev/null || true
+  # A `sudo ./install.sh` leaves these owned by root, and the failure that
+  # produces is a redirection error inside a background job — which `set -e`
+  # never sees, so the start used to be reported as a success with an empty pid.
+  # Check up front, so the reason is the message.
+  for dir in "$LD_RUN_DIR" "$LD_LOG_DIR"; do
+    [[ -d "$dir" ]] || { fail "$lang: $dir does not exist and could not be created"; return 1; }
+    [[ -w "$dir" ]] || { fail "$lang: $dir is not writable by $(id -un). Give it to yourself with 'sudo chown -R $(id -un) $dir', or start with sudo."; return 1; }
+  done
+
+  rm -f "$(pid_for "$lang")"
   # `cd` into the app dir so `python -m app.main` resolves, and detach fully so
   # closing the terminal does not take the server with it.
   (
@@ -105,7 +121,34 @@ do_start() {
       >>"$(log_for "$lang")" 2>&1 &
     echo $! > "$(pid_for "$lang")"
   )
-  info "$lang: started (pid $(cat "$(pid_for "$lang")"), log $(log_for "$lang"))"
+  pid="$(cat "$(pid_for "$lang")" 2>/dev/null || true)"
+  [[ -n "$pid" ]] || { fail "$lang: no pid was recorded in $(pid_for "$lang"); the server did not start"; return 1; }
+
+  # A config the server refuses — a model directory that is not there, a
+  # certificate it cannot read, a port already taken — kills the process a few
+  # seconds in, most of that spent importing ctranslate2. Watch for that rather
+  # than reporting a pid that is about to stop existing.
+  #
+  # "Uvicorn running on" is the marker because it is logged after the socket is
+  # bound, which is the last thing that can fail. A model load happens before
+  # it and takes minutes, so a real start usually reaches the timeout below —
+  # which is not a failure, and says so.
+  local waited=0 ticks=$((LD_START_TIMEOUT * 10))
+  while (( waited < ticks )); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$(pid_for "$lang")"
+      fail "$lang: exited during startup. The last lines of $(log_for "$lang"):"
+      tail -n 8 "$(log_for "$lang")" >&2 || true
+      return 1
+    fi
+    if grep -q "Uvicorn running on" "$(log_for "$lang")" 2>/dev/null; then
+      info "$lang: started (pid $pid, log $(log_for "$lang"))"
+      return 0
+    fi
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  info "$lang: started (pid $pid), still loading — 'health $lang' says when it can transcribe"
 }
 
 do_stop() {
@@ -164,7 +207,8 @@ do_logs() {
 do_check() {
   local lang="$1"
   require_python
-  ( cd "$LD_APP_DIR" && "$LD_PYTHON" -m app.main --config "$(config_for "$lang")" --check )
+  ( cd "$LD_APP_DIR" && "$LD_PYTHON" -m app.main --config "$(config_for "$lang")" \
+      --backend "$LD_BACKEND" --check )
 }
 
 for_each() {
