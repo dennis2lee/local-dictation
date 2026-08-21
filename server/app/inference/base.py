@@ -11,6 +11,15 @@ class InferenceError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class Word:
+    """One decoded word and where it sits in the audio that was passed in."""
+
+    text: str
+    start: float
+    end: float
+
+
+@dataclass(frozen=True)
 class TranscriptionResult:
     """One decode of the whole current utterance buffer.
 
@@ -26,8 +35,12 @@ class TranscriptionResult:
     duration_seconds: float = 0.0
     #: Mean log-probability when the backend reports one; None otherwise.
     avg_logprob: float | None = None
-    #: Segment end times in seconds, used for nothing yet but cheap to carry.
+    #: Segment end times in seconds.
     segment_ends: tuple[float, ...] = field(default_factory=tuple)
+    #: Word-level timings. This is what lets the streaming layer drop audio it
+    #: has already committed, which is the difference between a decode window
+    #: that grows without bound and one that stays flat.
+    words: tuple[Word, ...] = field(default_factory=tuple)
 
     @property
     def real_time_factor(self) -> float | None:
@@ -52,8 +65,11 @@ class Transcriber(Protocol):
         """Decode a short synthetic sample so the first real utterance is not
         paying for lazy weight loading."""
 
-    def transcribe(self, pcm: bytes) -> TranscriptionResult:
+    def transcribe(self, pcm: bytes, *, prompt: str = "") -> TranscriptionResult:
         """Transcribe 16 kHz mono signed 16-bit little-endian PCM.
+
+        `prompt` carries the text already committed for this utterance, so a
+        decode of a trimmed window still knows what came before it.
 
         Raises InferenceError on a recoverable failure.
         """

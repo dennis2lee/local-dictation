@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from app import PROTOCOL_VERSION, __version__
 from app.api import AppState, health_router, websocket_router
 from app.inference.base import InferenceError
-from app.inference.factory import create_transcriber
+from app.inference.factory import create_draft_transcriber, create_transcriber
 from app.observability.logging import configure_logging
 from app.settings import ConfigError, Settings, load_settings
 
@@ -27,7 +27,8 @@ log = logging.getLogger(__name__)
 
 def create_app(settings: Settings, *, backend: str = "whisper") -> FastAPI:
     transcriber = create_transcriber(settings.model, backend=backend)
-    state = AppState.create(settings, transcriber)
+    draft = create_draft_transcriber(settings.model, backend=backend)
+    state = AppState.create(settings, transcriber, draft)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -37,6 +38,7 @@ def create_app(settings: Settings, *, backend: str = "whisper") -> FastAPI:
                 "language": settings.language,
                 "port": settings.server.port,
                 "model": transcriber.name,
+                "draft_model": draft.name if draft else None,
                 "max_sessions": settings.limits.max_sessions,
                 "protocol_version": PROTOCOL_VERSION,
                 "version": __version__,

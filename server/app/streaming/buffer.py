@@ -43,6 +43,23 @@ class AudioBuffer:
     def mark_decoded(self) -> None:
         self._decoded_bytes = len(self._data)
 
+    def trim_before(self, seconds: float) -> int:
+        """Drop the first `seconds` of audio. Returns the bytes removed.
+
+        This is what keeps the decode window flat. Whisper re-reads its whole
+        input on every pass, so an utterance that only ever grows costs
+        quadratic CPU: by the time someone has spoken for thirty seconds each
+        pass is decoding thirty seconds, and the decoder falls behind the
+        microphone and never catches up.
+        """
+        drop = int(seconds * self._sample_rate) * BYTES_PER_SAMPLE
+        drop = max(0, min(drop, len(self._data)))
+        if drop == 0:
+            return 0
+        del self._data[:drop]
+        self._decoded_bytes = max(0, self._decoded_bytes - drop)
+        return drop
+
     def keep_tail(self, seconds: float) -> None:
         """Drop everything but the last `seconds` of audio.
 

@@ -103,6 +103,7 @@ async def dictation(websocket: WebSocket) -> None:
         settings=state.settings.streaming,
         executor=state.executor,
         metrics=state.metrics,
+        draft=state.draft,
     )
 
     reason = "error"

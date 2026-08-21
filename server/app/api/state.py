@@ -18,6 +18,8 @@ log = logging.getLogger(__name__)
 class AppState:
     settings: Settings
     transcriber: Transcriber
+    #: Optional fast model for partial text. See ModelSettings.draft_path.
+    draft: Transcriber | None
     limiter: SessionLimiter
     metrics: Metrics
     executor: ThreadPoolExecutor
@@ -28,10 +30,13 @@ class AppState:
     shutting_down: bool = field(default=False)
 
     @classmethod
-    def create(cls, settings: Settings, transcriber: Transcriber) -> AppState:
+    def create(
+        cls, settings: Settings, transcriber: Transcriber, draft: Transcriber | None = None
+    ) -> AppState:
         return cls(
             settings=settings,
             transcriber=transcriber,
+            draft=draft,
             limiter=SessionLimiter(settings.limits.max_sessions),
             metrics=Metrics(language=settings.language, model=transcriber.name),
             # One worker per admissible session: the model serialises internally
@@ -45,6 +50,8 @@ class AppState:
 
     def warmup(self) -> None:
         try:
+            if self.draft is not None:
+                self.draft.warmup()
             self.transcriber.warmup()
         except Exception:  # noqa: BLE001 - readiness must not depend on it
             log.exception("warmup failed; serving anyway with a cold model")
@@ -54,4 +61,6 @@ class AppState:
         self.shutting_down = True
         self.ready = False
         self.executor.shutdown(wait=True, cancel_futures=True)
+        if self.draft is not None:
+            self.draft.close()
         self.transcriber.close()

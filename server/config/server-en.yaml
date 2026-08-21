@@ -21,6 +21,11 @@ model:
   # the benchmark in docs/operations.md — hyperthreads make INT8 slower here.
   cpu_threads: 0
   num_workers: 1
+  # Optional small model used only for the live partial text, which cuts
+  # first-partial latency from ~3.7 s to ~0.9 s on CPU. Nothing it produces is
+  # ever committed — the model above decodes the utterance once at the end and
+  # that is the text the user keeps. See docs/latency.md for the measurements.
+  draft_path: null
   # Site vocabulary hint, prepended to every decode. Keep it under ~200
   # characters: it is charged against the context window each pass.
   initial_prompt: null
@@ -32,6 +37,10 @@ streaming:
   # Trailing silence that ends an utterance and triggers a final transcript.
   silence_ms: 600
   max_utterance_seconds: 120
+  # Longest audio a single decode pass may cover. Beyond this, audio whose text
+  # is already committed is dropped and carried forward as a prompt, so cost per
+  # pass stays flat however long someone talks.
+  max_window_seconds: 12.0
   # LocalAgreement-2: commit what two consecutive hypotheses agree on.
   agreement_window: 2
   vad: "silero"

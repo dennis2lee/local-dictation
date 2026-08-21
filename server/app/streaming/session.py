@@ -25,10 +25,11 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from functools import partial
 from concurrent.futures import Executor
 from typing import Protocol
 
-from app.inference.base import InferenceError, Transcriber, TranscriptionResult
+from app.inference.base import InferenceError, Transcriber, TranscriptionResult, Word
 from app.protocol import ServerError, ServerMessage, ServerTranscript
 from app.settings import StreamingSettings
 from app.streaming.buffer import AudioBuffer, AudioFormatError
@@ -65,11 +66,16 @@ class StreamingSession:
         metrics: MetricsSink | None = None,
         clock: Callable[[], float] = time.monotonic,
         vad: object | None = None,
+        draft: Transcriber | None = None,
     ) -> None:
         self.session_id = session_id
         self.events: asyncio.Queue[ServerMessage] = asyncio.Queue()
 
         self._transcriber = transcriber
+        # When a draft model is configured, incremental passes run on it and
+        # its output is shown but never committed: the accurate model decodes
+        # the utterance once at the end and that is what becomes real text.
+        self._draft = draft
         self._settings = settings
         self._executor = executor
         self._metrics = metrics or NullMetrics()
@@ -86,7 +92,14 @@ class StreamingSession:
         self._revision = 0
         self._utterance_index = 0
         self._last_emitted: tuple[str, str] | None = None
-        self._last_hypothesis = ""
+        #: Latest hypothesis for the audio currently in the buffer.
+        self._window_hypothesis = ""
+        #: Text committed for this utterance whose audio has been trimmed away.
+        #: Emitted `stable` is always this plus whatever the window has agreed.
+        self._committed_prefix = ""
+        #: Tail of the committed text, handed to the decoder so a trimmed window
+        #: still knows what sentence it is in the middle of.
+        self._prompt = ""
 
         self._wake = asyncio.Event()
         self._flush_requested = False
@@ -99,6 +112,7 @@ class StreamingSession:
         self._flush_started_at: float | None = None
 
         self.decode_count = 0
+        self.draft_decode_count = 0
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -231,58 +245,130 @@ class StreamingSession:
         pcm = self._buffer.snapshot()
         self._buffer.mark_decoded()
 
-        result = await self._decode(pcm)
+        result = await self._decode(pcm, self._draft or self._transcriber)
         if result is None:
             return
 
         hypothesis = result.text.strip()
         if not hypothesis:
             return
-        self._last_hypothesis = hypothesis
+        self._window_hypothesis = hypothesis
 
         agreement = self._agreement.update(hypothesis)
-        if agreement.conflict:
-            # The decoder revised committed text. Close the utterance at what
-            # the user already has, then reopen with the new reading.
-            await self._close_utterance(agreement.stable)
-            self._agreement.reset()
-            self._last_hypothesis = hypothesis
-            reopened = self._agreement.update(hypothesis)
-            self._emit(reopened.stable, reopened.partial, final=False)
+
+        if self._draft is not None:
+            # Draft text is provisional by construction, so a revision is not a
+            # conflict — nothing has been committed from it. Show the whole
+            # window hypothesis as partial and let the accurate model decide
+            # what the sentence actually was.
+            if agreement.conflict:
+                self._agreement.reset()
+                self._agreement.update(hypothesis)
+            self._emit(self._committed_prefix, hypothesis, final=False)
+            self._trim_decoded_audio(result)
             return
 
-        self._emit(agreement.stable, agreement.partial, final=False)
+        if agreement.conflict:
+            # The decoder revised committed text. Close the utterance at what
+            # the user already has, then reopen with the new reading. The audio
+            # stays: it belongs to the new utterance.
+            await self._close_utterance(self._agreement.committed)
+            self._start_new_utterance()
+            self._committed_prefix = ""
+            self._prompt = ""
+            self._agreement.reset()
+            self._last_emitted = None
+            reopened = self._agreement.update(hypothesis)
+            self._emit(self._committed_prefix + reopened.stable, reopened.partial, final=False)
+            return
+
+        self._emit(self._committed_prefix + agreement.stable, agreement.partial, final=False)
+        self._trim_decoded_audio(result)
+
+    def _trim_decoded_audio(self, result: TranscriptionResult) -> None:
+        """Drop audio whose text is already committed.
+
+        Without this the decode window grows for as long as someone keeps
+        talking, and because Whisper re-reads its whole input every pass the
+        cost per pass grows with it. Past roughly ten seconds of continuous
+        speech on CPU the decoder stops keeping up and never recovers — which is
+        exactly the latency risk the project plan flags as its largest.
+
+        The committed text is carried forward as a prompt instead, so the
+        decoder still has the context it needs to punctuate and capitalise.
+        """
+        if self._buffer.duration_seconds < self._settings.max_window_seconds:
+            return
+        committed = self._agreement.committed
+        if not committed.strip():
+            return
+
+        cut = _word_boundary_seconds(result.words, committed)
+        if cut is None or cut <= 0.1:
+            return
+
+        self._buffer.trim_before(cut)
+        self._committed_prefix += committed
+        self._prompt = self._committed_prefix[-_PROMPT_CHARACTERS:]
+        self._agreement.reset()
+        self._window_hypothesis = ""
+        log.debug(
+            "trimmed decode window",
+            extra={
+                "session_id": self.session_id,
+                "trimmed_seconds": round(cut, 2),
+                "window_seconds": round(self._buffer.duration_seconds, 2),
+            },
+        )
 
     async def _finalize(self) -> None:
         """End the current utterance, decoding any audio not yet seen."""
-        if self._buffer.undecoded_seconds > 0 and self._silence.has_speech:
+        # In draft mode the accurate model has not seen this audio at all, so it
+        # must run even when every sample was already decoded by the draft.
+        # With a single model, a pass over audio nothing has been added to would
+        # just reproduce the last hypothesis at full cost.
+        needs_accurate_pass = self._silence.has_speech and (
+            self._draft is not None or self._buffer.undecoded_seconds > 0
+        )
+        if needs_accurate_pass:
             pcm = self._buffer.snapshot()
             self._buffer.mark_decoded()
-            result = await self._decode(pcm)
+            # Always the accurate model, even in draft mode: this is the pass
+            # whose output the user keeps.
+            result = await self._decode(pcm, self._transcriber)
             if result is not None and result.text.strip():
-                self._last_hypothesis = result.text.strip()
+                self._window_hypothesis = result.text.strip()
 
-        final_text = self._last_hypothesis or self._agreement.committed
-        await self._close_utterance(final_text)
+        if self._draft is not None:
+            # The window agreement only ever held draft text, and none of it
+            # reached the client as `stable`. Clearing it means the accurate
+            # reading cannot "conflict" with a guess nobody committed.
+            self._agreement.reset()
+
+        window_text = self._window_hypothesis or self._agreement.committed
+        await self._close_utterance(window_text)
         self._reset_utterance()
 
-    async def _close_utterance(self, final_text: str) -> None:
+    async def _close_utterance(self, window_text: str) -> None:
         """Emit the terminal transcript for the current utterance, if any."""
-        if not final_text.strip():
+        if not (self._committed_prefix + window_text).strip():
             return
 
-        agreement = self._agreement.commit_all(final_text)
+        agreement = self._agreement.commit_all(window_text)
         if agreement.conflict:
             # Committed text cannot be retracted: seal the current utterance
             # with what was already committed, then carry the contradicting
             # reading into a fresh one.
-            self._emit(self._agreement.committed, "", final=True)
+            self._emit(self._committed_prefix + self._agreement.committed, "", final=True)
             self._start_new_utterance()
+            self._committed_prefix = ""
+            self._prompt = ""
             self._agreement.reset()
-            sealed = self._agreement.commit_all(final_text)
+            self._last_emitted = None
+            sealed = self._agreement.commit_all(window_text)
             self._emit(sealed.stable, "", final=True)
         else:
-            self._emit(agreement.stable, "", final=True)
+            self._emit(self._committed_prefix + agreement.stable, "", final=True)
 
         self._metrics.count_utterance()
         if self._flush_started_at is not None:
@@ -294,19 +380,24 @@ class StreamingSession:
         self._buffer.reset()
         self._silence.reset()
         self._agreement.reset()
-        self._last_hypothesis = ""
+        self._window_hypothesis = ""
+        self._committed_prefix = ""
+        self._prompt = ""
         self._last_emitted = None
 
     def _start_new_utterance(self) -> None:
         self._utterance_index += 1
 
-    async def _decode(self, pcm: bytes) -> TranscriptionResult | None:
+    async def _decode(self, pcm: bytes, transcriber: Transcriber) -> TranscriptionResult | None:
         if not pcm:
             return None
         loop = asyncio.get_running_loop()
         started = self._clock()
+        prompt = self._prompt
         try:
-            result = await loop.run_in_executor(self._executor, self._transcriber.transcribe, pcm)
+            result = await loop.run_in_executor(
+                self._executor, partial(transcriber.transcribe, pcm, prompt=prompt)
+            )
         except InferenceError as exc:
             self._metrics.count_error("inference_failed")
             log.warning(
@@ -321,6 +412,8 @@ class StreamingSession:
             return None
 
         self.decode_count += 1
+        if transcriber is self._draft:
+            self.draft_decode_count += 1
         self._metrics.observe_decode(
             audio_seconds=result.audio_seconds,
             duration_seconds=result.duration_seconds or (self._clock() - started),
@@ -344,6 +437,29 @@ class StreamingSession:
         if not self._first_partial_seen and self._first_audio_at is not None:
             self._first_partial_seen = True
             self._metrics.observe_first_partial(self._clock() - self._first_audio_at)
+
+
+#: How much committed text to hand the decoder as context. Whisper charges the
+#: prompt against its context window, so this is deliberately short.
+_PROMPT_CHARACTERS = 200
+
+
+def _word_boundary_seconds(words: tuple[Word, ...], committed: str) -> float | None:
+    """Audio time at which `committed` ends, per the decoder's own word timings.
+
+    Returns None when the words do not cover the committed text, which happens
+    if a backend reports no timings at all. Trimming is then skipped — slower,
+    but never wrong.
+    """
+    target = len(committed.strip())
+    if target == 0 or not words:
+        return None
+    consumed = ""
+    for word in words:
+        consumed += word.text
+        if len(consumed.strip()) >= target:
+            return word.end
+    return None
 
 
 __all__ = ["StreamingSession", "AudioFormatError", "MetricsSink", "NullMetrics"]

@@ -68,6 +68,7 @@ async def status(request: Request) -> JSONResponse:
         {
             "language": settings.language,
             "model": state.transcriber.name,
+            "draft_model": state.draft.name if state.draft else None,
             "version": __version__,
             "protocol_version": PROTOCOL_VERSION,
             "ready": state.ready,

@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from app.inference.base import InferenceError, TranscriptionResult
+from app.inference.base import InferenceError, TranscriptionResult, Word
 from app.settings import ModelSettings
 
 log = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ class FasterWhisperTranscriber:
             return
         log.info("warmup complete", extra={"warmup_seconds": round(time.monotonic() - started, 2)})
 
-    def transcribe(self, pcm: bytes) -> TranscriptionResult:
+    def transcribe(self, pcm: bytes, *, prompt: str = "") -> TranscriptionResult:
         if self._closed:
             raise InferenceError("transcriber is closed")
         if len(pcm) % BYTES_PER_SAMPLE:
@@ -106,6 +106,10 @@ class FasterWhisperTranscriber:
             return TranscriptionResult(text="")
 
         s = self._settings
+        # The prompt is what the trimmed-away audio already said. Without it a
+        # decode of the tail loses the sentence it belongs to and re-capitalises
+        # mid-sentence.
+        initial_prompt = " ".join(filter(None, (s.initial_prompt, prompt))) or None
         started = time.monotonic()
         try:
             with self._lock:
@@ -115,11 +119,11 @@ class FasterWhisperTranscriber:
                     task="transcribe",
                     beam_size=s.beam_size,
                     temperature=s.temperature,
-                    initial_prompt=s.initial_prompt,
+                    initial_prompt=initial_prompt,
                     condition_on_previous_text=s.condition_on_previous_text,
                     vad_filter=True,
                     vad_parameters={"min_silence_duration_ms": 500},
-                    word_timestamps=False,
+                    word_timestamps=True,
                 )
                 collected = list(segments)  # the generator is where decoding happens
         except Exception as exc:  # noqa: BLE001 - backend raises many concrete types
@@ -129,12 +133,19 @@ class FasterWhisperTranscriber:
         text = "".join(segment.text for segment in collected).strip()
         logprobs = [seg.avg_logprob for seg in collected if seg.avg_logprob is not None]
 
+        words = tuple(
+            Word(text=word.word, start=word.start, end=word.end)
+            for segment in collected
+            for word in (segment.words or ())
+        )
+
         return TranscriptionResult(
             text=text,
             audio_seconds=audio_seconds,
             duration_seconds=duration,
             avg_logprob=sum(logprobs) / len(logprobs) if logprobs else None,
             segment_ends=tuple(seg.end for seg in collected),
+            words=words,
         )
 
     def close(self) -> None:

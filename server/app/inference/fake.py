@@ -10,7 +10,7 @@ from __future__ import annotations
 import threading
 import time
 
-from app.inference.base import InferenceError, TranscriptionResult
+from app.inference.base import InferenceError, TranscriptionResult, Word
 
 SAMPLE_RATE = 16000
 BYTES_PER_SAMPLE = 2
@@ -40,6 +40,7 @@ class FakeTranscriber:
         self._fail_on_call = fail_on_call
         self._lock = threading.Lock()
         self.calls = 0
+        self.last_prompt = ""
         self.warmed_up = False
         self.closed = False
 
@@ -54,7 +55,8 @@ class FakeTranscriber:
     def warmup(self) -> None:
         self.warmed_up = True
 
-    def transcribe(self, pcm: bytes) -> TranscriptionResult:
+    def transcribe(self, pcm: bytes, *, prompt: str = "") -> TranscriptionResult:
+        self.last_prompt = prompt
         with self._lock:
             self.calls += 1
             call = self.calls
@@ -64,12 +66,22 @@ class FakeTranscriber:
             raise InferenceError("scripted failure")
 
         audio_seconds = len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE)
-        words = min(len(self._script), int(audio_seconds / self._seconds_per_word))
+        count = min(len(self._script), int(audio_seconds / self._seconds_per_word))
+        spoken = self._script[:count]
+        words = tuple(
+            Word(
+                text=(" " if index else "") + word,
+                start=index * self._seconds_per_word,
+                end=(index + 1) * self._seconds_per_word,
+            )
+            for index, word in enumerate(spoken)
+        )
         return TranscriptionResult(
-            text=" ".join(self._script[:words]),
+            text=" ".join(spoken),
             audio_seconds=audio_seconds,
             duration_seconds=self._latency,
             avg_logprob=-0.2,
+            words=words,
         )
 
     def close(self) -> None:

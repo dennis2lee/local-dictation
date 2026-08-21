@@ -4,10 +4,36 @@ from __future__ import annotations
 
 import logging
 
+from dataclasses import replace
+
 from app.inference.base import Transcriber
 from app.settings import ModelSettings
 
 log = logging.getLogger(__name__)
+
+
+def create_draft_transcriber(
+    settings: ModelSettings, *, backend: str = "whisper"
+) -> Transcriber | None:
+    """Build the optional low-latency model used for partial text.
+
+    It inherits the primary model's device, quantisation and thread settings:
+    running the draft on different hardware settings than the model it is
+    racing would make the latency numbers meaningless.
+    """
+    if not settings.draft_path:
+        return None
+
+    draft_settings = replace(settings, path=settings.draft_path, draft_path=None)
+    if backend == "fake":
+        from app.inference.fake import FakeTranscriber
+
+        return FakeTranscriber(language=settings.language)
+
+    from app.inference.whisper import FasterWhisperTranscriber
+
+    log.info("loading the draft model", extra={"draft_path": settings.draft_path})
+    return FasterWhisperTranscriber(draft_settings)
 
 
 def create_transcriber(settings: ModelSettings, *, backend: str = "whisper") -> Transcriber:

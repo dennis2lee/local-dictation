@@ -317,3 +317,81 @@ async def test_push_audio_rejects_ragged_frames(streaming_settings, transcriber,
     ) as session:
         with pytest.raises(AudioFormatError):
             session.push_audio(b"\x00\x00\x00")
+
+
+# -- draft model -----------------------------------------------------------
+
+
+async def test_draft_output_is_shown_but_never_committed(streaming_settings, executor):
+    """The whole point of the draft tier: fast text the user can see, and a
+    committed prefix that only ever comes from the accurate model."""
+    draft = FakeTranscriber("ko", seconds_per_word=0.3, script=["빠른", "초안", "텍스트"])
+    primary = FakeTranscriber("ko", seconds_per_word=0.3, script=["정확한", "최종", "텍스트"])
+
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=primary,
+        settings=streaming_settings,
+        executor=executor,
+        draft=draft,
+    ) as session:
+        await feed(session, [speech(0.2)] * 15)
+        interim = await drain(session)
+        assert interim, "no partials from the draft model"
+        assert all(not e.stable for e in interim if isinstance(e, ServerTranscript)), (
+            "draft text reached the client as committed"
+        )
+        assert any("초안" in e.partial for e in interim if isinstance(e, ServerTranscript))
+
+        await session.flush()
+        final = [e for e in await drain(session) if isinstance(e, ServerTranscript) and e.final]
+
+    assert len(final) == 1
+    assert "정확한" in final[0].stable, f"final came from the wrong model: {final[0].stable!r}"
+    assert "초안" not in final[0].stable
+    assert draft.calls > primary.calls, "the expensive model ran more often than the cheap one"
+
+
+async def test_the_accurate_model_runs_once_per_utterance(streaming_settings, executor):
+    draft = FakeTranscriber("ko", seconds_per_word=0.3)
+    primary = FakeTranscriber("ko", seconds_per_word=0.3)
+
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=primary,
+        settings=streaming_settings,
+        executor=executor,
+        draft=draft,
+    ) as session:
+        await feed(session, [speech(0.2)] * 12)
+        await session.flush()
+        await drain(session)
+
+    assert primary.calls == 1, f"the accurate model ran {primary.calls} times, want 1"
+    assert session.draft_decode_count == session.decode_count - 1
+
+
+async def test_a_draft_revision_does_not_split_the_utterance(streaming_settings, executor):
+    """A draft model that changes its mind is normal and must not produce a
+    second utterance — nothing it said was ever committed."""
+
+    class FlipFlop(FakeTranscriber):
+        def transcribe(self, pcm, *, prompt=""):
+            result = super().transcribe(pcm, prompt=prompt)
+            if self.calls % 2 == 0:
+                return type(result)(text="완전히 다른 문장", audio_seconds=result.audio_seconds)
+            return result
+
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=FakeTranscriber("ko", seconds_per_word=0.3),
+        settings=streaming_settings,
+        executor=executor,
+        draft=FlipFlop("ko", seconds_per_word=0.3),
+    ) as session:
+        await feed(session, [speech(0.2)] * 14)
+        await session.flush()
+        events = await drain(session)
+
+    utterances = {e.utterance_id for e in events if isinstance(e, ServerTranscript)}
+    assert len(utterances) == 1, f"draft churn split the utterance into {len(utterances)}"

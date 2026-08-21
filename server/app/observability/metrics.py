@@ -47,7 +47,13 @@ class Histogram:
         return rows
 
     def quantile(self, q: float) -> float | None:
-        """Bucket-resolution estimate; good enough for an alert threshold."""
+        """Bucket-resolution estimate; good enough for an alert threshold.
+
+        None means either "no observations" or "above the largest bucket" —
+        both of which say the same thing to an operator: this number is not
+        telling you it is fine. Returning +Inf instead would be more precise and
+        would also make the JSON status endpoint fail to serialise.
+        """
         if self.count == 0:
             return None
         target = q * self.count
@@ -56,7 +62,7 @@ class Histogram:
             running += bucket_count
             if running >= target:
                 return edge
-        return float("inf")
+        return None
 
 
 def _format_float(value: float) -> str:
@@ -200,5 +206,11 @@ class Metrics:
                 "first_partial_p95": self.first_partial.quantile(0.95),
                 "finalization_p95": self.finalization.quantile(0.95),
                 "rtf_p95": self.real_time_factor.quantile(0.95),
+                "over_budget": {
+                    "first_partial": self.first_partial.quantile(0.95) is None and self.first_partial.count > 0,
+                    "finalization": self.finalization.quantile(0.95) is None and self.finalization.count > 0,
+                    "real_time_factor": self.real_time_factor.quantile(0.95) is None
+                    and self.real_time_factor.count > 0,
+                },
                 "errors": dict(self.errors_by_code),
             }

@@ -45,6 +45,19 @@ class ModelSettings:
     #: 0 lets CTranslate2 pick; pin it to physical cores after benchmarking.
     cpu_threads: int = 0
     num_workers: int = 1
+    #: Optional small model used only for the live partial text.
+    #:
+    #: Whisper's encoder always processes a padded 30-second window, so a decode
+    #: pass costs the same whether it covers three seconds or ten. That fixed
+    #: cost — measured at roughly 3.2 s for large-v3-turbo INT8 on eight
+    #: performance cores — is the floor on how quickly partial text can appear,
+    #: and it is well above the plan's 2 s target. A `base` conversion runs the
+    #: same pass in about 0.3 s.
+    #:
+    #: When this is set, partials come from the draft model and the accurate
+    #: model decodes the utterance once, at the end, for the committed text.
+    #: See docs/latency.md.
+    draft_path: str | None = None
     #: Domain vocabulary hint. Keep it short — it is prepended to every decode.
     initial_prompt: str | None = None
     #: Set false only when an operator deliberately trades accuracy for latency.
@@ -59,6 +72,11 @@ class StreamingSettings:
     silence_ms: int = 600
     #: Hard cap; the utterance is force-finalized and a non-fatal error is sent.
     max_utterance_seconds: int = 120
+    #: Longest stretch of audio a single decode pass may cover. Once the buffer
+    #: exceeds this and there is committed text to anchor on, the already
+    #: transcribed audio is dropped and its text is carried forward as a prompt.
+    #: This is what keeps per-pass cost flat over a long utterance.
+    max_window_seconds: float = 12.0
     #: Number of consecutive agreeing hypotheses required to commit a prefix.
     #: 2 is the LocalAgreement-2 policy; 3 is more conservative and slower.
     agreement_window: int = 2
@@ -132,6 +150,10 @@ class Settings:
             errors.append("streaming.agreement_window must be >= 2")
         if self.streaming.max_utterance_seconds < 5:
             errors.append("streaming.max_utterance_seconds must be >= 5")
+        if self.streaming.max_window_seconds < 3:
+            errors.append("streaming.max_window_seconds must be >= 3")
+        if self.streaming.max_window_seconds > self.streaming.max_utterance_seconds:
+            errors.append("streaming.max_window_seconds cannot exceed max_utterance_seconds")
         if self.limits.max_sessions < 1:
             errors.append("limits.max_sessions must be >= 1")
         if self.limits.max_audio_frame_bytes < 640:

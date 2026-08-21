@@ -66,14 +66,7 @@ class EnergyVad:
         return self._frame_samples
 
     def is_speech(self, frame: bytes) -> bool:
-        count = len(frame) // BYTES_PER_SAMPLE
-        if count == 0:
-            return False
-        total = 0
-        for (sample,) in struct.iter_unpack("<h", frame[: count * BYTES_PER_SAMPLE]):
-            total += sample * sample
-        rms = math.sqrt(total / count) / 32768.0
-        return rms >= self._threshold
+        return _rms(frame) >= self._threshold
 
     def reset(self) -> None:
         return None
@@ -82,11 +75,23 @@ class EnergyVad:
 class SileroVad:
     """Silero VAD through onnxruntime, loaded from a local file only.
 
-    The exported graph differs between Silero v4 (`h`/`c` inputs) and v5
-    (`state`), so the input names are read from the model rather than assumed.
-    Anything unexpected raises at construction time, where `create_vad` turns it
-    into a fallback instead of a mid-session failure.
+    Two things about the exported graph are easy to get wrong and produce a
+    detector that silently reports silence forever:
+
+    * v5 takes 576 samples per call at 16 kHz — a 512-sample frame with the
+      previous frame's last 64 samples prepended as context. Feed it a bare
+      512-sample frame and every probability comes back near zero, which looks
+      exactly like a quiet room.
+    * v4 exposes `h`/`c` recurrent inputs, v5 a single `state`.
+
+    Both are handled by reading the input names from the model rather than
+    assuming, and the constructor runs a self-test that fails loudly if the
+    probabilities do not respond to signal at all.
     """
+
+    #: Samples of the previous frame that v5 expects prepended to each window.
+    CONTEXT_SAMPLES = 64
+    FRAME_SAMPLES = 512
 
     def __init__(self, model_path: str | Path, threshold: float = 0.5) -> None:
         try:
@@ -117,10 +122,11 @@ class SileroVad:
         if not (self._stateful_v5 or self._stateful_v4):
             raise RuntimeError(f"unsupported silero variant, inputs: {self._input_names}")
 
-        self._frame_samples = 512  # both v4 and v5 accept 512 at 16 kHz
+        # v4 consumes the window directly; only v5 wants the carried context.
+        self._context_samples = self.CONTEXT_SAMPLES if self._stateful_v5 else 0
+
         self.reset()
-        # Prove the graph actually runs before the first utterance depends on it.
-        self.is_speech(b"\x00\x00" * self._frame_samples)
+        self._smoke_test()
         self.reset()
 
     @property
@@ -129,26 +135,31 @@ class SileroVad:
 
     @property
     def frame_samples(self) -> int:
-        return self._frame_samples
+        return self.FRAME_SAMPLES
 
     def reset(self) -> None:
         np = self._np
+        self._context = np.zeros(self._context_samples, dtype=np.float32)
         if self._stateful_v5:
             self._state = np.zeros((2, 1, 128), dtype=np.float32)
         else:
             self._h = np.zeros((2, 1, 64), dtype=np.float32)
             self._c = np.zeros((2, 1, 64), dtype=np.float32)
 
-    def is_speech(self, frame: bytes) -> bool:
+    def probability(self, frame: bytes) -> float:
+        """Speech probability for one frame of exactly `frame_samples`."""
         np = self._np
         samples = np.frombuffer(frame, dtype="<i2").astype(np.float32) / 32768.0
-        if samples.size != self._frame_samples:
-            padded = np.zeros(self._frame_samples, dtype=np.float32)
-            padded[: min(samples.size, self._frame_samples)] = samples[: self._frame_samples]
+        if samples.size != self.FRAME_SAMPLES:
+            padded = np.zeros(self.FRAME_SAMPLES, dtype=np.float32)
+            padded[: min(samples.size, self.FRAME_SAMPLES)] = samples[: self.FRAME_SAMPLES]
             samples = padded
 
+        window = (
+            np.concatenate([self._context, samples]) if self._context_samples else samples
+        )
         feed = {
-            "input": samples.reshape(1, -1),
+            "input": window.reshape(1, -1),
             "sr": np.array(SAMPLE_RATE, dtype=np.int64),
         }
         if self._stateful_v5:
@@ -158,12 +169,28 @@ class SileroVad:
             feed["c"] = self._c
 
         outputs = self._session.run(None, feed)
-        probability = float(np.asarray(outputs[0]).reshape(-1)[0])
         if self._stateful_v5:
             self._state = outputs[1]
         else:
             self._h, self._c = outputs[1], outputs[2]
-        return probability >= self._threshold
+        if self._context_samples:
+            self._context = samples[-self._context_samples :]
+        return float(np.asarray(outputs[0]).reshape(-1)[0])
+
+    def is_speech(self, frame: bytes) -> bool:
+        return self.probability(frame) >= self._threshold
+
+    def _smoke_test(self) -> None:
+        """Prove the graph runs and returns a finite probability.
+
+        This cannot prove the window size is right: Silero is a speech detector,
+        so it correctly ignores any noise we could synthesise here, and a
+        misconfigured window looks identical to a quiet room. That case is
+        caught at runtime instead — see SilenceTracker's energy cross-check.
+        """
+        probability = self.probability(b"\x00\x00" * self.FRAME_SAMPLES)
+        if not 0.0 <= probability <= 1.0:
+            raise RuntimeError(f"model returned {probability!r}, expected a probability")
 
 
 class AlwaysSpeech:
@@ -210,9 +237,27 @@ class SilenceTracker:
     Audio arrives in whatever sizes the client chose, which will not line up
     with the detector's frame size, so partial frames are carried over. Work is
     O(new samples): nothing rescans the buffer.
+
+    It also cross-checks the detector against raw signal level. A neural VAD
+    that is wired up wrong does not raise — it reports silence forever, and the
+    server sits there transcribing nothing while the user talks. If the detector
+    calls a stretch of clearly loud audio silent, the tracker says so and falls
+    back to the energy detector rather than staying deaf.
     """
 
-    def __init__(self, vad: VoiceActivityDetector, sample_rate: int = SAMPLE_RATE) -> None:
+    #: RMS above which audio is unambiguously not a quiet room.
+    LOUD_RMS = 0.02
+    #: How long the detector may disagree with the signal level before we stop
+    #: believing it. Long enough that a genuinely noisy room does not trip it.
+    DISAGREEMENT_LIMIT_SECONDS = 4.0
+
+    def __init__(
+        self,
+        vad: VoiceActivityDetector,
+        sample_rate: int = SAMPLE_RATE,
+        *,
+        cross_check: bool = True,
+    ) -> None:
         self._vad = vad
         self._sample_rate = sample_rate
         self._frame_bytes = vad.frame_samples * BYTES_PER_SAMPLE
@@ -221,9 +266,18 @@ class SilenceTracker:
         self._trailing_silence_frames = 0
         self._speech_frames = 0
 
+        self._cross_check = cross_check and vad.name not in ("energy", "none")
+        self._loud_but_silent_frames = 0
+        self._fell_back = False
+
     @property
     def detector_name(self) -> str:
         return self._vad.name
+
+    @property
+    def fell_back(self) -> bool:
+        """True once the detector was replaced for disagreeing with the signal."""
+        return self._fell_back
 
     @property
     def has_speech(self) -> bool:
@@ -243,15 +297,58 @@ class SilenceTracker:
         while offset + self._frame_bytes <= len(data):
             frame = data[offset : offset + self._frame_bytes]
             offset += self._frame_bytes
-            if self._vad.is_speech(frame):
+            speech = self._vad.is_speech(frame)
+            if self._cross_check:
+                self._audit(frame, speech)
+            if speech:
                 self._speech_frames += 1
                 self._trailing_silence_frames = 0
             else:
                 self._trailing_silence_frames += 1
         self._leftover = data[offset:]
 
+    def _audit(self, frame: bytes, speech: bool) -> None:
+        if speech:
+            self._loud_but_silent_frames = 0
+            return
+        if _rms(frame) < self.LOUD_RMS:
+            self._loud_but_silent_frames = 0
+            return
+
+        self._loud_but_silent_frames += 1
+        if self._loud_but_silent_frames * self._frame_seconds < self.DISAGREEMENT_LIMIT_SECONDS:
+            return
+
+        log.error(
+            "%s VAD reported %.1fs of clearly audible input as silence; "
+            "falling back to the energy detector for this session. The model "
+            "file or its expected window size is probably wrong.",
+            self._vad.name,
+            self._loud_but_silent_frames * self._frame_seconds,
+        )
+        self._replace_with_energy()
+
+    def _replace_with_energy(self) -> None:
+        self._vad = EnergyVad()
+        self._frame_bytes = self._vad.frame_samples * BYTES_PER_SAMPLE
+        self._frame_seconds = self._vad.frame_samples / self._sample_rate
+        self._leftover = b""
+        self._cross_check = False
+        self._fell_back = True
+
     def reset(self) -> None:
         self._leftover = b""
         self._trailing_silence_frames = 0
         self._speech_frames = 0
+        self._loud_but_silent_frames = 0
         self._vad.reset()
+
+
+def _rms(frame: bytes) -> float:
+    count = len(frame) // BYTES_PER_SAMPLE
+    if count == 0:
+        return 0.0
+    total = 0
+    for (sample,) in struct.iter_unpack("<h", frame[: count * BYTES_PER_SAMPLE]):
+        total += sample * sample
+    return math.sqrt(total / count) / 32768.0
