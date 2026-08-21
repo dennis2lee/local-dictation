@@ -63,14 +63,59 @@ ditto "$APP" "$STAGE/$(basename "$APP")"
 # file count for nothing. Signatures live in the binary, not in xattrs.
 xattr -cr "$STAGE"
 
+# Without a component plist, pkgbuild marks an app bundle relocatable, and the
+# installer then follows any copy of the same bundle identifier that Launch
+# Services happens to know about — a developer's build output, a copy on another
+# volume, one left in ~/Downloads. --install-location is not consulted in that
+# case, and the receipt still says /Applications while the files went elsewhere,
+# which is about as confusing as an install gets.
+#
+# BundleIsRelocatable false pins it to /Applications. BundleHasStrictIdentifier
+# stops an unrelated bundle that reuses the identifier from being upgraded in
+# place.
+info "writing the component definition"
+COMPONENT_PLIST="$OUTPUT/.component.plist"
+cat > "$COMPONENT_PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<array>
+  <dict>
+    <key>RootRelativeBundlePath</key>
+    <string>$(basename "$APP")</string>
+    <key>BundleIsRelocatable</key>
+    <false/>
+    <key>BundleIsVersionChecked</key>
+    <true/>
+    <key>BundleHasStrictIdentifier</key>
+    <true/>
+    <key>BundleOverwriteAction</key>
+    <string>upgrade</string>
+  </dict>
+</array>
+</plist>
+PLIST
+
 info "building the component package"
 COMPONENT="$OUTPUT/.LocalDictation-component.pkg"
 pkgbuild \
   --root "$STAGE" \
+  --component-plist "$COMPONENT_PLIST" \
   --identifier "$IDENTIFIER" \
   --version "$VERSION" \
   --install-location /Applications \
   "$COMPONENT"
+
+# Relocation is invisible in the built file and silent at install time. Assert
+# it, so a future change to the component plist cannot quietly bring it back.
+if pkgutil --expand "$COMPONENT" "$OUTPUT/.component-check" >/dev/null 2>&1; then
+  if grep -q '<relocate>' "$OUTPUT/.component-check/PackageInfo"; then
+    rm -rf "$OUTPUT/.component-check"
+    die "the component package still allows relocation; the installer would follow an existing copy of the bundle instead of installing to /Applications"
+  fi
+  rm -rf "$OUTPUT/.component-check"
+  info "  relocation is off; this installs to /Applications and nowhere else"
+fi
 
 info "writing the distribution definition"
 DISTRIBUTION="$OUTPUT/.distribution.xml"

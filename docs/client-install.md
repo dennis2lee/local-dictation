@@ -27,7 +27,7 @@ That is one command, and it is [step 3](#3-install-a-speech-model) below.
 Download `LocalDictation-<version>.pkg` and open it, or:
 
 ```bash
-sudo installer -pkg LocalDictation-0.1.1.pkg -target /
+sudo installer -pkg LocalDictation-0.1.7.pkg -target /
 ```
 
 A `.dmg` is also published if you prefer to drag the app to Applications.
@@ -47,7 +47,15 @@ Run `LocalDictation-<version>-x64.msi`. It installs to
 For an unattended install:
 
 ```powershell
-msiexec /i LocalDictation-0.1.1-x64.msi /qn /l*v install.log
+msiexec /i LocalDictation-0.1.7-x64.msi /qn /l*v install.log
+```
+
+The app lands in `/Applications` and nowhere else. If you have an older copy
+somewhere — a build output, a second volume — remove it first and forget the old
+receipt, or macOS may keep upgrading that one instead:
+
+```bash
+sudo pkgutil --forget com.local-dictation.client
 ```
 
 ### What the installer does not include
