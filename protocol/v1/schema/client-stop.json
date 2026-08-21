@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-dictation.internal/protocol/v1/client-stop.json",
+  "title": "stop",
+  "type": "object",
+  "required": ["type"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {"const": "stop"},
+    "protocol_version": {"type": "integer", "const": 1}
+  }
+}

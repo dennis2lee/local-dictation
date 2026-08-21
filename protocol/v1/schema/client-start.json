@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-dictation.internal/protocol/v1/client-start.json",
+  "title": "start",
+  "type": "object",
+  "required": ["type", "protocol_version", "session_id", "language", "audio"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {"const": "start"},
+    "protocol_version": {"type": "integer", "const": 1},
+    "session_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "client_version": {"type": "string", "maxLength": 32},
+    "language": {"enum": ["ko", "en"]},
+    "audio": {
+      "type": "object",
+      "required": ["encoding", "sample_rate", "channels"],
+      "additionalProperties": false,
+      "properties": {
+        "encoding": {"const": "pcm_s16le"},
+        "sample_rate": {"type": "integer", "const": 16000},
+        "channels": {"type": "integer", "const": 1}
+      }
+    }
+  }
+}

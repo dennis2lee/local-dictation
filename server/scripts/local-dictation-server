@@ -1,0 +1,211 @@
+#!/usr/bin/env bash
+#
+# Start, stop and inspect the two language servers as background processes.
+# Works the same on Ubuntu and macOS. No init system, no service registration:
+# a PID file per language and `nohup` is the whole supervision model.
+#
+#   local-dictation-server start   all
+#   local-dictation-server stop    all
+#   local-dictation-server restart ko
+#   local-dictation-server status  all
+#   local-dictation-server health  all
+#   local-dictation-server logs    ko --follow
+#   local-dictation-server check   all
+#
+# Paths come from the environment so the same script serves a system install and
+# a checkout:
+#
+#   LD_HOME        install root                 (default: /opt/local-dictation)
+#   LD_APP_DIR     directory containing app/    (default: $LD_HOME/app)
+#   LD_CONFIG_DIR  server-{ko,en}.yaml live here (default: $LD_HOME/config)
+#   LD_PYTHON      interpreter                  (default: $LD_HOME/venv/bin/python)
+#   LD_RUN_DIR     PID files                    (default: $LD_HOME/run)
+#   LD_LOG_DIR     log files                    (default: $LD_HOME/log)
+#   LD_BACKEND     inference backend            (default: whisper; "fake" loads
+#                  no model and emits scripted text — for plumbing checks only)
+
+set -euo pipefail
+
+LD_HOME="${LD_HOME:-/opt/local-dictation}"
+LD_APP_DIR="${LD_APP_DIR:-$LD_HOME/app}"
+LD_CONFIG_DIR="${LD_CONFIG_DIR:-$LD_HOME/config}"
+LD_RUN_DIR="${LD_RUN_DIR:-$LD_HOME/run}"
+LD_LOG_DIR="${LD_LOG_DIR:-$LD_HOME/log}"
+LD_PYTHON="${LD_PYTHON:-$LD_HOME/venv/bin/python}"
+LD_BACKEND="${LD_BACKEND:-whisper}"
+
+LANGUAGES=(ko en)
+
+die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
+info() { printf '%s\n' "$*"; }
+
+usage() { sed -n '3,28p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+
+config_for() { printf '%s/server-%s.yaml' "$LD_CONFIG_DIR" "$1"; }
+pid_for()    { printf '%s/local-dictation-%s.pid' "$LD_RUN_DIR" "$1"; }
+log_for()    { printf '%s/local-dictation-%s.log' "$LD_LOG_DIR" "$1"; }
+
+require_python() {
+  [[ -x "$LD_PYTHON" ]] || die "python not found at $LD_PYTHON (set LD_PYTHON)"
+}
+
+# Ports and scheme live in the YAML. Ask Python rather than keeping a second
+# copy here that can drift out of step with the config.
+read_config_field() {
+  local lang="$1" field="$2" config
+  config="$(config_for "$lang")"
+  [[ -f "$config" ]] || die "config not found: $config"
+  require_python
+  LD_FIELD="$field" "$LD_PYTHON" - "$config" <<'PY'
+import os, sys, yaml
+with open(sys.argv[1], encoding="utf-8") as handle:
+    data = yaml.safe_load(handle) or {}
+field = os.environ["LD_FIELD"]
+if field == "port":
+    print((data.get("server") or {}).get("port", ""))
+elif field == "scheme":
+    print("https" if (data.get("security") or {}).get("tls_certificate") else "http")
+PY
+}
+
+port_for()   { read_config_field "$1" port; }
+scheme_for() { read_config_field "$1" scheme; }
+
+resolve_targets() {
+  case "${1:-all}" in
+    all)   printf '%s\n' "${LANGUAGES[@]}" ;;
+    ko|en) printf '%s\n' "$1" ;;
+    *)     die "unknown target '$1' (expected: ko, en or all)" ;;
+  esac
+}
+
+running() {
+  local pid_file pid
+  pid_file="$(pid_for "$1")"
+  [[ -f "$pid_file" ]] || return 1
+  pid="$(cat "$pid_file" 2>/dev/null || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+do_start() {
+  local lang="$1"
+  if running "$lang"; then
+    info "$lang: already running (pid $(cat "$(pid_for "$lang")"))"
+    return 0
+  fi
+  require_python
+  [[ -d "$LD_APP_DIR/app" ]] || die "app package not found under $LD_APP_DIR (set LD_APP_DIR)"
+  mkdir -p "$LD_RUN_DIR" "$LD_LOG_DIR"
+
+  # `cd` into the app dir so `python -m app.main` resolves, and detach fully so
+  # closing the terminal does not take the server with it.
+  (
+    cd "$LD_APP_DIR"
+    nohup "$LD_PYTHON" -m app.main --config "$(config_for "$lang")" --backend "$LD_BACKEND" \
+      >>"$(log_for "$lang")" 2>&1 &
+    echo $! > "$(pid_for "$lang")"
+  )
+  info "$lang: started (pid $(cat "$(pid_for "$lang")"), log $(log_for "$lang"))"
+}
+
+do_stop() {
+  local lang="$1" pid_file pid
+  pid_file="$(pid_for "$lang")"
+  if ! running "$lang"; then
+    rm -f "$pid_file"
+    info "$lang: not running"
+    return 0
+  fi
+  pid="$(cat "$pid_file")"
+  kill -TERM "$pid" 2>/dev/null || true
+  # uvicorn is configured for a 10 s graceful shutdown; wait 15 before forcing,
+  # so an in-flight final transcript still reaches the user.
+  for _ in $(seq 1 150); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    info "$lang: did not stop gracefully, sending SIGKILL"
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  rm -f "$pid_file"
+  info "$lang: stopped"
+}
+
+do_status() {
+  local lang="$1"
+  if running "$lang"; then
+    printf '%-3s running  pid=%-8s port=%s\n' "$lang" "$(cat "$(pid_for "$lang")")" "$(port_for "$lang")"
+  else
+    printf '%-3s stopped\n' "$lang"
+  fi
+}
+
+# `health` asks the server itself. A process can be alive while the model is
+# still loading, and that difference is exactly what an operator is checking.
+do_health() {
+  local lang="$1" url body
+  url="$(scheme_for "$lang")://127.0.0.1:$(port_for "$lang")/health/ready"
+  if body="$(curl --silent --show-error --max-time 5 --insecure "$url" 2>&1)"; then
+    printf '%-3s %s\n' "$lang" "$body"
+    return 0
+  fi
+  printf '%-3s UNREACHABLE %s\n' "$lang" "$body"
+  return 1
+}
+
+do_logs() {
+  local lang="$1" follow="$2" file
+  file="$(log_for "$lang")"
+  [[ -f "$file" ]] || die "no log file at $file"
+  if [[ "$follow" == "1" ]]; then tail -f "$file"; else tail -n 200 "$file"; fi
+}
+
+do_check() {
+  local lang="$1"
+  require_python
+  ( cd "$LD_APP_DIR" && "$LD_PYTHON" -m app.main --config "$(config_for "$lang")" --check )
+}
+
+for_each() {
+  local action="$1" target="$2" failures=0
+  local lang
+  for lang in $(resolve_targets "$target"); do
+    "$action" "$lang" || failures=$((failures + 1))
+  done
+  return $((failures > 0))
+}
+
+main() {
+  [[ $# -ge 1 ]] || usage 1
+  local command="$1"; shift
+  local target="all" follow=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -f|--follow) follow=1 ;;
+      -h|--help)   usage 0 ;;
+      ko|en|all)   target="$1" ;;
+      *)           die "unexpected argument: $1" ;;
+    esac
+    shift
+  done
+
+  case "$command" in
+    start)   for_each do_start   "$target" ;;
+    stop)    for_each do_stop    "$target" ;;
+    restart) for_each do_stop "$target"; for_each do_start "$target" ;;
+    status)  for_each do_status  "$target" ;;
+    health)  for_each do_health  "$target" ;;
+    check)   for_each do_check   "$target" ;;
+    logs)
+      local targets; targets="$(resolve_targets "$target")"
+      [[ "$(printf '%s' "$targets" | wc -w)" -eq 1 ]] || die "logs needs a single language (ko or en)"
+      do_logs "$targets" "$follow"
+      ;;
+    -h|--help|help) usage 0 ;;
+    *) die "unknown command: $command" ;;
+  esac
+}
+
+main "$@"

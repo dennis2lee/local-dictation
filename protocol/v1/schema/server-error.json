@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-dictation.internal/protocol/v1/server-error.json",
+  "title": "error",
+  "type": "object",
+  "required": ["type", "protocol_version", "code", "message", "fatal"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {"const": "error"},
+    "protocol_version": {"type": "integer", "const": 1},
+    "code": {
+      "enum": [
+        "protocol_unsupported",
+        "language_mismatch",
+        "server_busy",
+        "audio_format_invalid",
+        "audio_before_start",
+        "utterance_too_long",
+        "inference_failed",
+        "session_timeout",
+        "malformed_message",
+        "internal_error"
+      ]
+    },
+    "message": {"type": "string"},
+    "fatal": {"type": "boolean"}
+  }
+}

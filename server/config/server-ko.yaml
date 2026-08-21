@@ -1,0 +1,61 @@
+# Korean instance. Identical to server-en.yaml except for language and port —
+# keep them that way, and diff them in review.
+server:
+  host: "0.0.0.0"
+  port: 8765
+  instance_name: "local-dictation-ko"
+
+model:
+  # A local directory holding the CTranslate2-converted large-v3. Never a
+  # HuggingFace repo id: the host has no internet egress.
+  path: "/opt/local-dictation/models/large-v3"
+  device: "cpu"
+  compute_type: "int8"
+  language: "ko"
+  # Greedy decoding. Beam search costs ~2x wall-clock for a marginal accuracy
+  # gain that dictation, where the user is watching the text appear, does not
+  # benefit from. Raise it only if a benchmark says the latency budget allows.
+  beam_size: 1
+  temperature: 0.0
+  # 0 lets CTranslate2 choose. Pin it to the physical core count after running
+  # the benchmark in docs/operations.md — hyperthreads make INT8 slower here.
+  cpu_threads: 0
+  num_workers: 1
+  # Site vocabulary hint, prepended to every decode. Keep it under ~200
+  # characters: it is charged against the context window each pass.
+  initial_prompt: null
+  condition_on_previous_text: false
+
+streaming:
+  # Decode cadence. Lower = snappier partials and more CPU per second of audio.
+  chunk_ms: 600
+  # Trailing silence that ends an utterance and triggers a final transcript.
+  silence_ms: 600
+  max_utterance_seconds: 120
+  # LocalAgreement-2: commit what two consecutive hypotheses agree on.
+  agreement_window: 2
+  vad: "silero"
+  silero_model_path: "/opt/local-dictation/models/silero_vad.onnx"
+  energy_threshold: 0.006
+
+security:
+  tls_certificate: "/opt/local-dictation/tls/server.crt"
+  tls_private_key: "/opt/local-dictation/tls/server.key"
+  client_ca: "/opt/local-dictation/tls/internal-ca.crt"
+  require_client_certificate: true
+
+limits:
+  # large-v3 on CPU does not degrade gracefully. Beyond this the server returns
+  # server_busy instead of queueing behind the decoder.
+  max_sessions: 2
+  max_audio_frame_bytes: 65536
+  idle_timeout_seconds: 60
+  handshake_timeout_seconds: 10
+
+logging:
+  level: "INFO"
+  json: true
+  # The privacy guarantee. Turning either on is an auditable decision — see
+  # docs/operations.md before you do.
+  store_audio: false
+  store_transcript: false

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-dictation.internal/protocol/v1/server-ready.json",
+  "title": "ready",
+  "type": "object",
+  "required": ["type", "protocol_version", "session_id", "language", "model"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {"const": "ready"},
+    "protocol_version": {"type": "integer", "const": 1},
+    "session_id": {"type": "string", "minLength": 1, "maxLength": 64},
+    "language": {"enum": ["ko", "en"]},
+    "model": {"type": "string"},
+    "server_version": {"type": "string"}
+  }
+}

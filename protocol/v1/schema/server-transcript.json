@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-dictation.internal/protocol/v1/server-transcript.json",
+  "title": "transcript",
+  "type": "object",
+  "required": ["type", "protocol_version", "utterance_id", "revision", "stable", "partial", "final"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {"const": "transcript"},
+    "protocol_version": {"type": "integer", "const": 1},
+    "utterance_id": {"type": "string", "minLength": 1, "maxLength": 96},
+    "revision": {"type": "integer", "minimum": 1},
+    "stable": {"type": "string"},
+    "partial": {"type": "string"},
+    "final": {"type": "boolean"}
+  }
+}

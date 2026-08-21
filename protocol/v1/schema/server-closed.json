@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-dictation.internal/protocol/v1/server-closed.json",
+  "title": "closed",
+  "type": "object",
+  "required": ["type", "protocol_version", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "type": {"const": "closed"},
+    "protocol_version": {"type": "integer", "const": 1},
+    "reason": {"enum": ["client_stop", "server_shutdown", "idle_timeout", "error"]}
+  }
+}
