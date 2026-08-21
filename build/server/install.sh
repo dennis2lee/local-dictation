@@ -190,14 +190,30 @@ done
 info "installing the management command"
 cat > "$PREFIX/bin-local-dictation-server" <<WRAPPER
 #!/usr/bin/env bash
-# Defaults, not overrides: the script documents these as coming from the
-# environment, and a wrapper that pinned them would quietly make that untrue.
-export LD_HOME="\${LD_HOME:-$PREFIX}"
-export LD_APP_DIR="\${LD_APP_DIR:-$PREFIX/app}"
-export LD_CONFIG_DIR="\${LD_CONFIG_DIR:-$PREFIX/config}"
-export LD_RUN_DIR="\${LD_RUN_DIR:-$PREFIX/run}"
-export LD_LOG_DIR="\${LD_LOG_DIR:-$PREFIX/log}"
-export LD_PYTHON="\${LD_PYTHON:-$PREFIX/venv/bin/python}"
+#
+# This command *is* this prefix, so it pins the paths that decide which install
+# it operates. Defaulting them instead let one LD_PYTHON left exported in a
+# shell redirect every install on the machine, and the failure that produced
+# named the symptom rather than the cause.
+#
+# LD_BACKEND and LD_START_TIMEOUT are not paths and still come from the
+# environment. To drive a different tree entirely, run
+# app/scripts/local-dictation-server directly — it takes all of these from the
+# environment, which is how a checkout is served.
+__ld_pin() {
+  local name="\$1" want="\$2"
+  if [[ -n "\${!name:-}" && "\${!name}" != "\$want" ]]; then
+    printf 'note: ignoring %s=%s from your environment; this command operates %s\n' \
+      "\$name" "\${!name}" "$PREFIX" >&2
+  fi
+  export "\$name=\$want"
+}
+__ld_pin LD_HOME       "$PREFIX"
+__ld_pin LD_APP_DIR    "$PREFIX/app"
+__ld_pin LD_CONFIG_DIR "$PREFIX/config"
+__ld_pin LD_RUN_DIR    "$PREFIX/run"
+__ld_pin LD_LOG_DIR    "$PREFIX/log"
+__ld_pin LD_PYTHON     "$PREFIX/venv/bin/python"
 exec "$PREFIX/app/scripts/local-dictation-server" "\$@"
 WRAPPER
 chmod +x "$PREFIX/bin-local-dictation-server" "$PREFIX/app/scripts/"*

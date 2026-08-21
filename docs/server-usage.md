@@ -60,10 +60,17 @@ still loading; `health` is what answers when it can transcribe.
 
 ## Where things live
 
-The management command finds everything through `LD_*`. A wrapper written by the
-installer sets them to the prefix you installed into, so you only set them by
-hand when running from a checkout — or to point one command somewhere else,
-which they still allow.
+The management script finds everything through `LD_*`, which is how one script
+serves both a system install and a checkout.
+
+The `local-dictation-server` command you normally run is a wrapper the installer
+writes, and it **pins** the six path variables to its own prefix. That command is
+that install, so an `LD_PYTHON` left exported in a shell must not be able to
+redirect it — it says it is ignoring one rather than obeying it. `LD_BACKEND`
+and `LD_START_TIMEOUT` are not paths and still come from the environment.
+
+To point at a different tree, run `<prefix>/app/scripts/local-dictation-server`
+directly. That is the unwrapped script, and it reads every variable below.
 
 | Variable | Default | What it names |
 | --- | --- | --- |

@@ -80,11 +80,14 @@ print(" ".join(m for m in needed if importlib.util.find_spec(m) is None))
 DEPS
 )"
   [[ -z "$missing" ]] && return 0
+  # Naming LD_PYTHON second is deliberate: a value left exported in a shell is
+  # the likelier cause than a broken install, and the previous wording invited
+  # exporting one.
   die "$LD_PYTHON cannot import: ${missing// /, }
-The server's dependencies are not installed in that interpreter. Re-run the
-installer over this prefix to put them there:
-    <unpacked tarball>/install.sh --prefix $LD_HOME
-or point LD_PYTHON at the interpreter that has them."
+Either LD_PYTHON is set in your shell and is pointing away from this install —
+unset it and run the command again — or the dependencies were never installed
+under $LD_HOME, which the installer puts there:
+    <unpacked tarball>/install.sh --prefix $LD_HOME"
 }
 
 # Ports and scheme live in the YAML. Ask Python rather than keeping a second
