@@ -104,10 +104,15 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Install WiX
+        # Pinned to 5.x. `dotnet tool install --global wix` installs whatever is
+        # newest, and v7 refuses to run until an Open Source Maintenance Fee
+        # EULA is accepted (WIX7015). Package.wxs targets the v4/v5 schema
+        # anyway, so 5.x is the version it is actually written for.
         run: |
-          dotnet tool install --global wix
-          wix extension add -g WixToolset.UI.wixext
-          wix extension add -g WixToolset.Util.wixext
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add -g WixToolset.UI.wixext/5.0.2
+          wix extension add -g WixToolset.Util.wixext/5.0.2
+          wix --version
       - name: Build the MSI
         shell: pwsh
         run: |

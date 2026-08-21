@@ -10,9 +10,12 @@
 
   Prerequisites:
     winget install Microsoft.DotNet.SDK.8      (or any .NET 6+ SDK)
-    dotnet tool install --global wix
-    wix extension add -g WixToolset.UI.wixext
-    wix extension add -g WixToolset.Util.wixext
+    dotnet tool install --global wix --version 5.0.2
+    wix extension add -g WixToolset.UI.wixext/5.0.2
+    wix extension add -g WixToolset.Util.wixext/5.0.2
+
+  Pin the 5.x version. Package.wxs targets the v4/v5 schema, and WiX v7 refuses
+  to run at all until an Open Source Maintenance Fee EULA is accepted.
 
   A model is not packaged. See docs\model-setup.md.
 
@@ -64,7 +67,12 @@ if (Test-Path $licenseSource) {
 }
 
 $wix = Get-Command wix -ErrorAction SilentlyContinue
-if (-not $wix) { throw 'wix not found. Run: dotnet tool install --global wix' }
+if (-not $wix) { throw 'wix not found. Run: dotnet tool install --global wix --version 5.0.2' }
+
+$wixVersion = (& wix --version 2>&1 | Out-String).Trim()
+if ($wixVersion -notmatch '^[45]\.') {
+    Write-Warning "WiX $wixVersion is installed; Package.wxs targets the v4/v5 schema. If the build fails, install 5.0.2."
+}
 
 $msi = Join-Path $Output "LocalDictation-$Version-$Arch.msi"
 New-Item -ItemType Directory -Force -Path $Output | Out-Null
