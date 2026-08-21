@@ -3,7 +3,11 @@ package ui
 import (
 	"context"
 	"fmt"
+	"os"
+	"path"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -64,8 +68,12 @@ type settingsTab struct {
 	shortcutKey    *widget.Select
 
 	// Update
-	updateStatus *widget.Label
-	updateButton *widget.Button
+	updateStatus   *widget.Label
+	updateButton   *widget.Button
+	downloadButton *widget.Button
+	// offered is the last check's result, which the download button acts on.
+	// Both live on the Fyne goroutine and nothing else reads it.
+	offered update.Result
 
 	saveButton *widget.Button
 	message    *widget.Label
@@ -388,52 +396,141 @@ func (s *settingsTab) shortcutFromForm() config.Hotkey {
 // -- update ----------------------------------------------------------------
 
 func (s *settingsTab) buildUpdateSection(settings config.Config) fyne.CanvasObject {
-	s.updateStatus = widget.NewLabel("Update status not checked.")
+	s.updateStatus = widget.NewLabel(fmt.Sprintf(
+		"Not checked yet. Updates come from %s.", s.updateSource(settings).Describe()))
 	s.updateStatus.Wrapping = fyne.TextWrapWord
-	s.updateButton = widget.NewButtonWithIcon("Check for updates", theme.DownloadIcon(), s.onCheckUpdate)
 
-	if settings.Update.ManifestURL == "" {
-		s.updateStatus.SetText("No internal update server is configured.")
-		s.updateButton.Disable()
-	}
+	s.updateButton = widget.NewButtonWithIcon("Check for updates", theme.SearchIcon(), s.onCheckUpdate)
+	// Nothing to download until a check finds something, and a button that is
+	// there but does nothing is worse than one that appears when it applies.
+	s.downloadButton = primaryButton(
+		widget.NewButtonWithIcon("Download", theme.DownloadIcon(), s.onDownloadUpdate))
+	s.downloadButton.Hide()
 
 	return container.NewVBox(
 		sectionHeading("Software update"),
 		widget.NewLabel(fmt.Sprintf("Local Dictation %s", s.app.options.Version)),
 		s.updateStatus,
-		container.NewHBox(s.updateButton),
+		container.NewHBox(s.updateButton, s.downloadButton),
+	)
+}
+
+// updateSource is where a check goes: an internal distribution server when the
+// settings file names one, this project's own GitHub releases otherwise.
+//
+// The button used to be disabled outright without an internal server — which
+// meant everyone installing from the published packages had an update feature
+// whose only output was that it was not configured.
+func (s *settingsTab) updateSource(settings config.Config) update.Source {
+	return update.SourceFor(
+		settings.Update.ManifestURL,
+		settings.Update.PublicKey,
+		settings.Update.GitHubRepo,
+		s.app.options.Version,
 	)
 }
 
 func (s *settingsTab) onCheckUpdate() {
-	settings := s.app.Settings()
-	s.updateStatus.SetText("Checking…")
+	source := s.updateSource(s.app.Settings())
+	s.updateStatus.SetText(fmt.Sprintf("Asking %s…", source.Describe()))
 	s.updateButton.Disable()
+	s.downloadButton.Hide()
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
-
-		result, err := update.Checker{
-			ManifestURL: settings.Update.ManifestURL,
-			PublicKey:   settings.Update.PublicKey,
-			Current:     s.app.options.Version,
-		}.Check(ctx)
+		result, err := source.Check(ctx)
 
 		fyne.Do(func() {
 			s.updateButton.Enable()
+			s.offered = result
 			switch {
 			case err != nil:
 				s.updateStatus.SetText(fmt.Sprintf("Update check failed: %v", err))
 			case result.Newer:
-				s.updateStatus.SetText(fmt.Sprintf(
-					"Version %s is available. %s\nDownload it from %s and run the installer.",
-					result.Available, result.Notes, result.Artifact.URL))
+				s.updateStatus.SetText(offerText(result))
+				s.downloadButton.SetText(fmt.Sprintf("Download (%s)", humanSize(result.Artifact.Size)))
+				s.downloadButton.Show()
 			default:
-				s.updateStatus.SetText(fmt.Sprintf("Local Dictation %s is up to date.", result.Current))
+				s.updateStatus.SetText(fmt.Sprintf(
+					"Local Dictation %s is the newest release.", result.Current))
 			}
 		})
 	}()
+}
+
+// onDownloadUpdate fetches the installer and stops. Running it is the user's
+// own act: this application does not hand itself to an installer, and on both
+// platforms installing wants a window the user is looking at anyway.
+func (s *settingsTab) onDownloadUpdate() {
+	offered := s.offered
+	s.updateButton.Disable()
+	s.downloadButton.Disable()
+	s.updateStatus.SetText(fmt.Sprintf("Downloading %s…", installerName(offered.Artifact.URL)))
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		saved, err := update.Download(ctx, offered.Artifact, downloadDir(s.app.options.StateDir), nil)
+
+		fyne.Do(func() {
+			s.updateButton.Enable()
+			if err != nil {
+				s.downloadButton.Enable()
+				s.updateStatus.SetText(fmt.Sprintf("Download failed: %v", err))
+				return
+			}
+			s.downloadButton.Hide()
+			s.updateStatus.SetText(fmt.Sprintf(
+				"Saved to %s.\nQuit Local Dictation and open it to install %s.",
+				saved, offered.Available))
+		})
+	}()
+}
+
+// offerText is what the window says about a release it found.
+func offerText(result update.Result) string {
+	text := fmt.Sprintf("Version %s is available.", result.Available)
+	if notes := strings.TrimSpace(result.Notes); notes != "" {
+		text += " " + notes
+	}
+	if result.Page != "" {
+		text += "\n" + result.Page
+	}
+	return text
+}
+
+// downloadDir is where an installer lands: the Downloads folder, because that
+// is where someone will look for it and where their browser would have put it.
+// A machine without one falls back to the application's own state directory.
+func downloadDir(stateDir string) string {
+	if home, err := os.UserHomeDir(); err == nil {
+		downloads := filepath.Join(home, "Downloads")
+		if info, err := os.Stat(downloads); err == nil && info.IsDir() {
+			return downloads
+		}
+	}
+	return filepath.Join(stateDir, "updates")
+}
+
+func installerName(url string) string {
+	if url == "" {
+		return "the installer"
+	}
+	return path.Base(url)
+}
+
+// humanSize is for a button label, where "24 MB" is the whole of what someone
+// needs and 25341952 is not.
+func humanSize(bytes int64) string {
+	switch {
+	case bytes <= 0:
+		return "unknown size"
+	case bytes < 1<<20:
+		return fmt.Sprintf("%d KB", bytes>>10)
+	default:
+		return fmt.Sprintf("%.1f MB", float64(bytes)/(1<<20))
+	}
 }
 
 // -- actions ---------------------------------------------------------------

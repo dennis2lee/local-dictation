@@ -1,17 +1,23 @@
-// Package update checks an internal distribution server for a newer build.
+// Package update looks for a newer build.
 //
-// Three rules shape this, all from the plan's supply-chain section:
+// There are two places it can look, and which one is in play is a deployment
+// decision rather than a preference:
 //
-//   - the manifest comes from an internal HTTPS URL, never the public internet;
-//   - the manifest is signed, and an unsigned or badly signed one is not an
-//     "unknown" state to warn about, it is a refusal;
-//   - the download is verified against the hash in the signed manifest before
-//     anything is executed.
+//   - an internal distribution server, when a manifest URL is configured. The
+//     manifest is signed with an ed25519 key, and an unsigned or badly signed
+//     one is not an "unknown" state to warn about, it is a refusal. Ed25519
+//     rather than a certificate chain: the key is small enough to paste into a
+//     settings file, verification is a dozen lines with no parsing surface, and
+//     revoking it means shipping a new client — the honest model for an
+//     internally distributed tool.
+//   - the project's public GitHub releases otherwise, in github.go. Nobody
+//     running this from the published installers has an internal server, and
+//     the alternative to reading github.com is a client that can never tell
+//     anyone an update exists.
 //
-// Ed25519 rather than a certificate chain: the key is small enough to paste
-// into a settings file, verification is a dozen lines with no parsing surface,
-// and revoking it means shipping a new client — which is the honest model for
-// an internally distributed tool.
+// What both share is the last rule, and it is the one that matters most: the
+// download is verified against a published hash before anything is executed,
+// and this package never executes it. Installing stays the user's own act.
 package update
 
 import (
@@ -69,6 +75,28 @@ type Result struct {
 	Artifact Artifact
 	// Platform is the artifact key that was looked up, e.g. "windows/amd64".
 	Platform string
+	// Page is where a person can read about the release themselves. Only the
+	// GitHub source has one.
+	Page string
+}
+
+// A Source is somewhere a newer build can be found.
+type Source interface {
+	Check(context.Context) (Result, error)
+	// Describe names the source in one phrase, for the window to show before
+	// a check runs and in whatever it says afterwards.
+	Describe() string
+}
+
+// SourceFor picks between them: the internal server when one is configured,
+// the project's public releases otherwise. A managed deployment sets a
+// manifest URL and never touches github.com; everyone else gets the releases
+// they installed from in the first place.
+func SourceFor(manifestURL, publicKey, repo, current string) Source {
+	if strings.TrimSpace(manifestURL) != "" {
+		return Checker{ManifestURL: manifestURL, PublicKey: publicKey, Current: current}
+	}
+	return GitHub{Repo: repo, Current: current}
 }
 
 // Checker talks to one distribution server.
@@ -77,6 +105,18 @@ type Checker struct {
 	PublicKey   string
 	Current     string
 	HTTPClient  *http.Client
+}
+
+var _ Source = Checker{}
+
+// Describe names the source. The URL itself is the only honest description:
+// "the internal update server" would hide which one when a settings file is
+// wrong, which is exactly when someone is reading this.
+func (c Checker) Describe() string {
+	if trimmed := strings.TrimSpace(c.ManifestURL); trimmed != "" {
+		return trimmed
+	}
+	return "no update server"
 }
 
 // PlatformKey is the artifact key for the running build.

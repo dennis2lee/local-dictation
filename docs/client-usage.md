@@ -105,13 +105,36 @@ permission was revoked; the Main tab says so when that happens.
 
 ### Software update
 
-Shows the installed version. **Check for updates** asks your organisation's
-internal distribution server. If your site has not configured one, this section
-says so and does nothing.
+Shows the installed version. **Check for updates** looks for a newer one, and
+the section header line tells you where it will look before you press it.
 
-Updates are only accepted when the manifest carries a valid signature and the
-downloaded file matches the hash inside it. A signature that does not verify is
-refused outright, not reported as a warning.
+By default that is this project's own releases on github.com. When a newer one
+exists, the version and a link to its notes appear, along with a **Download**
+button showing how large the installer is. Downloading puts the installer in
+your `Downloads` folder and stops there — quit Local Dictation and open the file
+yourself to install it. The app never runs an installer on your behalf.
+
+The download is checked against the `SHA256SUMS` published with that release
+before it is kept; a file that does not match is deleted rather than saved. What
+that catches is a corrupted or truncated download. It is not a signature: the
+trust is HTTPS and the repository itself. A release with no published checksums
+is reported and not offered as a download — the link to the release page is
+still there, so fetching it by hand stays your decision.
+
+Nothing is sent anywhere. The check is one HTTPS GET for the release list, and
+it only happens when you press the button.
+
+**On a managed deployment**, set `update.manifest_url` and `update.public_key`
+in `settings.json` — beside `startup.log`, in the folders listed under
+[The app does not open at all](#the-app-does-not-open-at-all) — to point at your
+own distribution server. Those take
+precedence, github.com is never contacted, and the stronger rule applies: the
+manifest must carry a valid ed25519 signature and the download must match the
+hash inside it. A signature that does not verify is refused outright, not
+reported as a warning.
+
+A fork that publishes its own releases sets `update.github_repo` to
+`owner/name` instead.
 
 ---
 

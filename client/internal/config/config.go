@@ -111,13 +111,18 @@ func (h Hotkey) String() string {
 	return strings.Join(append(append([]string{}, h.Modifiers...), h.Key), " + ")
 }
 
-// Update points at the internal distribution server.
+// Update says where a newer build is looked for.
 type Update struct {
-	// ManifestURL is an internal HTTPS URL. Empty disables update checks.
+	// ManifestURL is an internal HTTPS URL. Empty means the check falls back
+	// to the project's public GitHub releases, which is what an install from
+	// the published packages wants.
 	ManifestURL string `json:"manifest_url"`
 	// PublicKey is the base64 ed25519 key that signs the manifest. Without it
 	// the client refuses to install anything.
 	PublicKey string `json:"public_key"`
+	// GitHubRepo overrides which repository the public check reads, for a
+	// fork that publishes its own releases. Empty means this project's.
+	GitHubRepo string `json:"github_repo"`
 	// CheckOnStart is off by default: a dictation tool should not make a
 	// network call the user did not ask for.
 	CheckOnStart bool `json:"check_on_start"`
@@ -136,7 +141,8 @@ type Config struct {
 }
 
 // Default is what a fresh install runs with: local mode, Korean, Ctrl+Shift+M,
-// no update server, nothing stored anywhere but this file.
+// update checks pointed at this project's public releases, nothing stored
+// anywhere but this file.
 func Default() Config {
 	return Config{
 		Version:  CurrentVersion,
