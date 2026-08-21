@@ -104,6 +104,6 @@
               Value="Before dictating, install a speech model: open PowerShell and run
                      &quot;[INSTALLFOLDER]server\scripts\fetch-model.ps1&quot; -Model large-v3-turbo
                      Then run &quot;[INSTALLFOLDER]local-dictation.exe&quot; --check to confirm everything is ready.
-                     See docs\installation.md in the install folder." />
+                     See docs\client-install.md in the install folder." />
   </Package>
 </Wix>

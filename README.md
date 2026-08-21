@@ -22,9 +22,13 @@ were already using. Audio never leaves the machine that transcribes it.
 
 ## Getting started
 
-1. Install the client — [installation.md](docs/installation.md)
+1. Install the client — [client-install.md](docs/client-install.md)
 2. Install a speech model, one command — [model-setup.md](docs/model-setup.md)
-3. Dictate — [usage.md](docs/usage.md)
+3. Dictate — [client-usage.md](docs/client-usage.md)
+
+Running a server other machines connect to is its own path, and needs no root:
+[server-install.md](docs/server-install.md), then
+[server-usage.md](docs/server-usage.md).
 
 ```bash
 # macOS, after installing the app
@@ -70,7 +74,7 @@ streaming policy either way.
 | [`server/`](server) | Python server — API, streaming, inference, config, scripts |
 | [`client/`](client) | Go client — UI, session, audio, transport, text input |
 | [`build/`](build) | Release builds: macOS pkg/dmg, Windows MSI, server tarball |
-| [`docs/`](docs) | Installation, usage, model setup, latency, operations, the original plan |
+| [`docs/`](docs) | Install and use, client and server; model setup; latency; the original plan |
 
 ## The latency problem, and the fix
 

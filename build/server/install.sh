@@ -197,7 +197,7 @@ if [[ "$USER_MODE" == "1" ]]; then
   EDIT_PREFIX=""
   POSTURE="The configs are set to 127.0.0.1 with TLS off, which is the posture for
 a prefix you own. To serve other machines, set server.host to 0.0.0.0 and put
-certificates in $PREFIX/tls — see docs/operations.md."
+certificates in $PREFIX/tls — see docs/server-usage.md."
 else
   EDIT_PREFIX="sudo "
   POSTURE="TLS is on and expects certificates under $PREFIX/tls. For a first run
@@ -229,5 +229,5 @@ Next:
 
 $POSTURE
 
-Full instructions: $PREFIX/docs/installation.md
+Full instructions: $PREFIX/docs/server-install.md
 NEXT

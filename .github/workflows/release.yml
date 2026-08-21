@@ -156,4 +156,6 @@ jobs:
             [docs/model-setup.md](docs/model-setup.md). Models are not bundled:
             they are 1.5–2.9 GB and carry their own licence.
 
-            Full instructions: [docs/installation.md](docs/installation.md)
+            Full instructions — [docs/client-install.md](docs/client-install.md)
+            for the desktop app, [docs/server-install.md](docs/server-install.md)
+            for a shared server.

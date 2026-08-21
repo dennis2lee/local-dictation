@@ -1,11 +1,14 @@
-# Operating the servers
+# Running the servers
 
-For whoever runs the shared servers. If you use standalone mode, you do not need
-this file — the client manages its own server.
+For whoever runs the speech servers day to day: what the commands do, what to
+configure, what to watch, and how to measure it. Getting one installed in the
+first place is [server-install.md](server-install.md).
 
-None of it needs root. `./install.sh` without sudo installs into a prefix you
-own, and then every command below is yours to run — see
-[installation.md](installation.md).
+If you use standalone mode you do not need this file — the client manages its
+own server.
+
+None of it needs root. An install into a prefix you own leaves every command
+below yours to run.
 
 ## The shape of it
 

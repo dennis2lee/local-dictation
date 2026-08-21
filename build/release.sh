@@ -11,7 +11,7 @@
 #   windows  the staged tree, and the MSI when wix is available
 #
 # What is never in any of them: a speech model, a Python runtime, or vendored
-# wheels. docs/installation.md says why and what to run instead.
+# wheels. docs/client-install.md says why and what to run instead.
 
 set -euo pipefail
 

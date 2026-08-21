@@ -1,9 +1,9 @@
-# Using Local Dictation
+# Using the client
 
 Put your cursor where the text should go, press the shortcut, speak, press it
 again. That is the whole thing.
 
-If you have not installed it yet, start with [installation.md](installation.md).
+If you have not installed it yet, start with [client-install.md](client-install.md).
 
 ---
 

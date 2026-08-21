@@ -20,7 +20,7 @@ model:
   beam_size: 1
   temperature: 0.0
   # 0 lets CTranslate2 choose. Pin it to the physical core count after running
-  # the benchmark in docs/operations.md — hyperthreads make INT8 slower here.
+  # the benchmark in docs/server-usage.md — hyperthreads make INT8 slower here.
   cpu_threads: 0
   num_workers: 1
   # Optional small model used only for the live partial text, which cuts
@@ -67,6 +67,6 @@ logging:
   level: "INFO"
   json: true
   # The privacy guarantee. Turning either on is an auditable decision — see
-  # docs/operations.md before you do.
+  # docs/server-usage.md before you do.
   store_audio: false
   store_transcript: false

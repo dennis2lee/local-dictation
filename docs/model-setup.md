@@ -35,27 +35,37 @@ behind the microphone and no amount of tuning elsewhere will fix the latency.
 
 ## Linux and macOS
 
+`$PREFIX` below is wherever you installed the server: `~/local-dictation` by
+default, `/opt/local-dictation` for a `sudo` install, or whatever you passed to
+`--prefix`.
+
 ```bash
-cd /opt/local-dictation/app/server   # or your checkout
+cd "$PREFIX/app"   # or the server/ directory of your checkout
+```
+
+```bash
 ./scripts/fetch-model.sh --list
 ```
 
 Then pick one:
 
 ```bash
-./scripts/fetch-model.sh large-v3-turbo --dest /opt/local-dictation/models
+./scripts/fetch-model.sh large-v3-turbo --dest "$PREFIX/models"
 ```
 
 ```bash
-./scripts/fetch-model.sh large-v3 --dest /opt/local-dictation/models
+./scripts/fetch-model.sh large-v3 --dest "$PREFIX/models"
 ```
 
 Both commands also fetch `silero_vad.onnx` (2.2 MiB), which the server uses to
 decide when an utterance has ended. To install both models at once:
 
 ```bash
-./scripts/fetch-model.sh all --dest /opt/local-dictation/models
+./scripts/fetch-model.sh all --dest "$PREFIX/models"
 ```
+
+The configs already name `$PREFIX/models/large-v3-turbo`, so fetching that one
+needs no further edit.
 
 ## Windows
 
@@ -87,7 +97,7 @@ tar czf ld-models.tgz ld-models
 ```bash
 scp ld-models.tgz dictation-server:/tmp/
 ssh dictation-server 'tar xzf /tmp/ld-models.tgz -C /opt/local-dictation --strip-components=1'
-ssh dictation-server '/opt/local-dictation/app/server/scripts/fetch-model.sh --verify'
+ssh dictation-server '/opt/local-dictation/app/scripts/fetch-model.sh --verify'
 ```
 
 If your site mirrors HuggingFace internally, point the script at the mirror
@@ -104,12 +114,13 @@ English model, only a Korean *process* and an English *process*.
 
 ```yaml
 model:
-  path: "/opt/local-dictation/models/large-v3-turbo"
+  path: "<prefix>/models/large-v3-turbo"
 streaming:
-  silero_model_path: "/opt/local-dictation/models/silero_vad.onnx"
+  silero_model_path: "<prefix>/models/silero_vad.onnx"
 ```
 
-Apply it to both files and restart:
+The installer writes both of these for the prefix you chose, so this is what to
+check rather than what to type. Apply any change to both files and restart:
 
 ```bash
 local-dictation-server restart all && local-dictation-server health all
@@ -123,7 +134,7 @@ than a startup error.
 ## Verifying an existing install
 
 ```bash
-./scripts/fetch-model.sh --verify --dest /opt/local-dictation/models
+./scripts/fetch-model.sh --verify --dest "$PREFIX/models"
 ```
 
 ```powershell

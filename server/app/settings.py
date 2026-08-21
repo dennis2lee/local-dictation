@@ -114,7 +114,7 @@ class LimitSettings:
 class LoggingSettings:
     level: str = "INFO"
     #: Both default to false and are asserted by tests. Turning them on is an
-    #: explicit, auditable choice — see docs/operations.md.
+    #: explicit, auditable choice — see docs/server-usage.md.
     store_audio: bool = False
     store_transcript: bool = False
     #: Emit one JSON object per line instead of human-readable lines.
