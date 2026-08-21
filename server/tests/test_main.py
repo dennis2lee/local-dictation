@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from app.main import cli
 
 
@@ -99,3 +101,26 @@ def test_a_missing_vad_model_warns_but_passes(tmp_path, capsys):
     )
     assert check(config) == 0
     assert "energy detector" in capsys.readouterr().err
+
+
+def test_a_model_that_cannot_be_loaded_is_reported_not_raised(tmp_path, capsys):
+    """A model.bin that exists and is not loadable — a truncated download, or a
+    conversion from a newer CTranslate2 — used to reach the log as a traceback
+    from inside the backend. It gets the same one-line answer as every other
+    startup failure."""
+    from app.inference.base import InferenceError
+    from app.inference.whisper import FasterWhisperTranscriber
+    from app.settings import ModelSettings
+
+    directory = tmp_path / "large-v3-turbo"
+    directory.mkdir()
+    (directory / "model.bin").write_text("not a model at all")
+
+    try:
+        import faster_whisper  # noqa: F401
+    except ImportError:
+        pytest.skip("the inference backend is not installed")
+
+    with pytest.raises(InferenceError) as caught:
+        FasterWhisperTranscriber(ModelSettings(path=str(directory)))
+    assert "could not be loaded" in str(caught.value)

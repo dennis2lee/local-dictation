@@ -59,14 +59,22 @@ class FasterWhisperTranscriber:
             },
         )
         started = time.monotonic()
-        self._model = WhisperModel(
-            str(model_path),
-            device=settings.device,
-            compute_type=settings.compute_type,
-            cpu_threads=settings.cpu_threads,
-            num_workers=settings.num_workers,
-            local_files_only=True,
-        )
+        try:
+            self._model = WhisperModel(
+                str(model_path),
+                device=settings.device,
+                compute_type=settings.compute_type,
+                cpu_threads=settings.cpu_threads,
+                num_workers=settings.num_workers,
+                local_files_only=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - CTranslate2 raises RuntimeError
+            # A directory that is missing or unreadable is already reported
+            # above. What lands here is a file that exists and cannot be loaded:
+            # a truncated download, or a conversion from a newer CTranslate2
+            # than this one. Both deserve the same one-line answer the caller
+            # gives every other startup failure, not a traceback in the log.
+            raise InferenceError(f"{model_path} could not be loaded: {exc}") from exc
         log.info("model loaded", extra={"load_seconds": round(time.monotonic() - started, 2)})
 
         # CTranslate2 models are not safe to call concurrently from several

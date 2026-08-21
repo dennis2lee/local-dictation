@@ -153,6 +153,15 @@ do_start() {
   done
 
   rm -f "$(pid_for "$lang")"
+
+  # The log is appended to across runs, so the marker below has to be looked for
+  # in what *this* process writes. Scanning the whole file would find a previous
+  # start's marker instantly and report success for a process that is about to
+  # die — the exact false success this watch exists to prevent.
+  local logfile since
+  logfile="$(log_for "$lang")"
+  since=$(( $(wc -c < "$logfile" 2>/dev/null || echo 0) + 1 ))
+
   # `cd` into the app dir so `python -m app.main` resolves, and detach fully so
   # closing the terminal does not take the server with it.
   (
@@ -177,12 +186,12 @@ do_start() {
   while (( waited < ticks )); do
     if ! kill -0 "$pid" 2>/dev/null; then
       rm -f "$(pid_for "$lang")"
-      fail "$lang: exited during startup. The last lines of $(log_for "$lang"):"
-      tail -n 8 "$(log_for "$lang")" >&2 || true
+      fail "$lang: exited during startup. What it logged before it went:"
+      tail -c "+$since" "$logfile" 2>/dev/null | tail -n 8 >&2 || true
       return 1
     fi
-    if grep -q "Uvicorn running on" "$(log_for "$lang")" 2>/dev/null; then
-      info "$lang: started (pid $pid, log $(log_for "$lang"))"
+    if tail -c "+$since" "$logfile" 2>/dev/null | grep -q "Uvicorn running on"; then
+      info "$lang: started (pid $pid, log $logfile)"
       return 0
     fi
     sleep 0.1
@@ -395,8 +404,10 @@ do_update() {
   done
   # "$@" now holds whatever goes through to install.sh.
 
-  # install.sh overwrites this very file. Bash has read to EOF by the time main
-  # runs, but re-executing from a copy removes the question entirely.
+  # install.sh overwrites this very file, and bash reads the script it is running
+  # in chunks, remembering a byte offset. Running the update from a copy keeps
+  # the install itself off a moving file — but the original is still open, so it
+  # must never come back here and read again. See the exit below.
   if [[ "${LD_UPDATING:-0}" != "1" ]]; then
     local copy status
     copy="$(mktemp)"
@@ -411,7 +422,14 @@ do_update() {
     LD_UPDATING=1 "$copy" "${args[@]}"
     status=$?
     rm -f "$copy"
-    return "$status"
+    # `exit`, not `return`. Returning hands control back to main, which ends,
+    # and bash then reads on from an offset into a file whose bytes have been
+    # replaced underneath it — running whatever fragment now lives there. That
+    # is how a successful update ended with "gets | wc -w): command not found"
+    # and an error from the middle of an unrelated command. Whether it happens
+    # at all depends on where the read buffer landed, which is why it survived
+    # testing. Exiting reads nothing further, ever.
+    exit "$status"
   fi
 
   # With no argument, go and get the newest release. Nothing else in the server
