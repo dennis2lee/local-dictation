@@ -1,0 +1,111 @@
+name: Test
+
+# Every push and pull request. The release workflow runs the same suites before
+# it builds anything, but finding out at tag time that main was broken a week
+# ago is finding out too late.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server (Python)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The oldest version the server claims to support, and the newest that
+        # its dependencies have wheels for.
+        python: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Install
+        working-directory: server
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -e '.[dev]'
+      - name: Test
+        working-directory: server
+        run: .venv/bin/python -m pytest -q
+      - name: Shipped configs validate
+        working-directory: server
+        run: |
+          .venv/bin/python -m app.main --config config/server-ko.yaml --check
+          .venv/bin/python -m app.main --config config/server-en.yaml --check
+
+  client:
+    name: Client (Go)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
+      - name: Linux GUI headers
+        if: runner.os == 'Linux'
+        # Fyne pulls in glfw, which compiles against X11 and Wayland both.
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            libgl1-mesa-dev xorg-dev libasound2-dev \
+            libwayland-dev libxkbcommon-dev wayland-protocols
+      - name: Vet
+        working-directory: client
+        run: go vet ./...
+      - name: Test
+        working-directory: client
+        run: go test -race ./...
+      - name: Build
+        working-directory: client
+        run: go build ./cmd/...
+
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: client/go.mod }
+      - name: gofmt
+        working-directory: client
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files need gofmt:"; echo "$unformatted"; exit 1
+          fi
+      - name: Shell scripts parse
+        # find, not a ** glob: bash does not enable globstar by default, so the
+        # pattern would silently match nothing and the check would always pass.
+        run: |
+          find build server/scripts -type f \( -name '*.sh' -o -name 'local-dictation-server' \) \
+            -print -exec bash -n {} \;
+
+  protocol:
+    name: Protocol schemas
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Schemas are valid and the bindings match them
+        working-directory: server
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --quiet -e '.[dev]'
+          .venv/bin/python -m pytest tests/test_protocol.py -q
