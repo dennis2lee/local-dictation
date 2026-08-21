@@ -12,7 +12,8 @@
 #   local-dictation-server logs    ko --follow
 #   local-dictation-server check   all
 #   local-dictation-server version
-#   local-dictation-server update  local-dictation-server-0.1.3.tar.gz
+#   local-dictation-server update              # fetch the latest release
+#   local-dictation-server update  ./server-0.1.5.tar.gz
 #
 # Paths come from the environment so the same script serves a system install and
 # a checkout:
@@ -27,6 +28,8 @@
 #                  no model and emits scripted text — for plumbing checks only)
 #   LD_START_TIMEOUT  seconds `start` watches a new process for an early exit
 #                  before handing back; 0 to not wait at all (default: 15)
+#   LD_RELEASE_REPO  owner/name that `update` with no argument fetches from
+#                  (default: dennis2lee/local-dictation)
 
 set -euo pipefail
 
@@ -38,6 +41,7 @@ LD_LOG_DIR="${LD_LOG_DIR:-$LD_HOME/log}"
 LD_PYTHON="${LD_PYTHON:-$LD_HOME/venv/bin/python}"
 LD_BACKEND="${LD_BACKEND:-whisper}"
 LD_START_TIMEOUT="${LD_START_TIMEOUT:-15}"
+LD_RELEASE_REPO="${LD_RELEASE_REPO:-dennis2lee/local-dictation}"
 
 LANGUAGES=(ko en)
 
@@ -248,6 +252,92 @@ do_check() {
       --backend "$LD_BACKEND" --check )
 }
 
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum   >/dev/null 2>&1; then shasum -a 256 "$1" | awk '{print $1}'
+  else die "need sha256sum or shasum on PATH"; fi
+}
+
+installed_version() {
+  local file="$LD_HOME/VERSION"
+  [[ -f "$file" ]] && tr -d '[:space:]' < "$file" || printf 'unknown'
+}
+
+# Prints three lines — version, tarball URL, SHA256SUMS URL — so the caller can
+# tell "already current" from "here is what to fetch" without a second request.
+#
+# It returns rather than dies: this runs inside a command substitution, where an
+# exit would only leave the subshell and the caller would carry on with nothing.
+# The JSON goes to a file rather than a pipe because `python -` already reads
+# the program from stdin, and the two cannot both have it.
+latest_release() {
+  local api="https://api.github.com/repos/$LD_RELEASE_REPO/releases/latest" body status
+  body="$(mktemp)"
+  if ! curl --silent --fail --location --max-time 30 --output "$body" "$api"; then
+    rm -f "$body"
+    printf 'error: could not reach %s\n' "$api" >&2
+    printf 'A host without egress cannot use this. Fetch the tarball elsewhere and pass it:\n' >&2
+    printf '    local-dictation-server update /path/to/local-dictation-server-<version>.tar.gz\n' >&2
+    return 1
+  fi
+
+  "$LD_PYTHON" - "$body" <<'RELEASE'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    release = json.load(handle)
+
+version = (release.get("tag_name") or "").lstrip("v")
+tarball = sums = ""
+for asset in release.get("assets") or []:
+    name = asset.get("name") or ""
+    if name.startswith("local-dictation-server-") and name.endswith(".tar.gz"):
+        tarball = asset.get("browser_download_url") or ""
+    elif name == "SHA256SUMS":
+        sums = asset.get("browser_download_url") or ""
+
+if not version or not tarball:
+    raise SystemExit("error: that release publishes no server tarball")
+print(version)
+print(tarball)
+print(sums)
+RELEASE
+  status=$?
+  rm -f "$body"
+  return "$status"
+}
+
+# Downloads into $3, leaving the file at $3/$(basename $1), and checks it
+# against the release's own SHA256SUMS. That catches a truncated or corrupted
+# download, which is what it is for — it is not a signature, and the trust here
+# is in HTTPS and in the release itself.
+fetch_release() {
+  local url="$1" sums_url="$2" into="$3" name expected actual
+  name="$(basename "$url")"
+
+  info "downloading $name"
+  curl --fail --location --progress-bar --max-time 900 --output "$into/$name" "$url" || return 1
+
+  if [[ -z "$sums_url" ]]; then
+    info "that release publishes no SHA256SUMS; $name cannot be checked"
+    return 0
+  fi
+  curl --silent --fail --location --max-time 60 --output "$into/SHA256SUMS" "$sums_url" || return 1
+
+  expected="$(awk -v want="$name" '$2 == want || $2 == "*" want {print $1}' "$into/SHA256SUMS")"
+  if [[ -z "$expected" ]]; then
+    printf 'error: SHA256SUMS does not list %s\n' "$name" >&2
+    return 1
+  fi
+  actual="$(sha256_of "$into/$name")"
+  if [[ "$actual" != "$expected" ]]; then
+    printf 'error: %s does not match its published checksum\n  expected %s\n  got      %s\n' \
+      "$name" "$expected" "$actual" >&2
+    return 1
+  fi
+  info "checksum ok"
+}
+
 # `version` is what you run after an update: the installed tree and the running
 # processes can disagree, and that gap is the whole question.
 do_version() {
@@ -289,9 +379,21 @@ do_version() {
 # install.sh keeps the configs and the models, and rewrites the code, the venv
 # and this script.
 do_update() {
-  local source="${1:-}"
-  [[ -n "$source" ]] || die "update needs the new local-dictation-server-<version>.tar.gz, or a directory it was unpacked into"
-  shift
+  #   update [--force] [<tarball|directory>] [installer arguments...]
+  #
+  # Stop at the first thing that is not ours: an option like --link belongs to
+  # install.sh, and treating it as a path is how `update --link ~/bin` used to
+  # fail with "not a file or a directory: --link".
+  local force=0 source=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --force) force=1; shift ;;
+      --)      shift; break ;;
+      -*)      break ;;
+      *)       source="$1"; shift; break ;;
+    esac
+  done
+  # "$@" now holds whatever goes through to install.sh.
 
   # install.sh overwrites this very file. Bash has read to EOF by the time main
   # runs, but re-executing from a copy removes the question entirely.
@@ -300,10 +402,44 @@ do_update() {
     copy="$(mktemp)"
     cat "$0" > "$copy"
     chmod +x "$copy"
-    LD_UPDATING=1 "$copy" update "$source" "$@"
+    # Rebuild the arguments rather than forwarding an empty string, which the
+    # no-argument form would otherwise turn into a path called "".
+    local args=(update)
+    if [[ "$force" == "1" ]]; then args+=(--force); fi
+    if [[ -n "$source" ]]; then args+=("$source"); fi
+    args+=("$@")
+    LD_UPDATING=1 "$copy" "${args[@]}"
     status=$?
     rm -f "$copy"
     return "$status"
+  fi
+
+  # With no argument, go and get the newest release. Nothing else in the server
+  # reaches the network — this is the operator asking for it, in the one command
+  # whose whole purpose is to replace the code on disk.
+  local downloaded=""
+  if [[ -z "$source" ]]; then
+    local release version url sums_url have
+    if ! release="$(latest_release)"; then
+      die "could not work out the latest release of $LD_RELEASE_REPO"
+    fi
+    version="$(printf '%s' "$release" | sed -n 1p)"
+    url="$(printf '%s' "$release" | sed -n 2p)"
+    sums_url="$(printf '%s' "$release" | sed -n 3p)"
+    have="$(installed_version)"
+
+    info "installed $have, latest $version"
+    if [[ "$have" == "$version" && "$force" != "1" ]]; then
+      info "already current — nothing to do (use 'update --force' to reinstall it)"
+      return 0
+    fi
+
+    downloaded="$(mktemp -d)"
+    if ! fetch_release "$url" "$sums_url" "$downloaded"; then
+      rm -rf "$downloaded"
+      die "could not fetch $version — nothing was changed"
+    fi
+    source="$downloaded/$(basename "$url")"
   fi
 
   local installer="" unpacked=""
@@ -320,7 +456,7 @@ do_update() {
 
   local lang restart=()
   for lang in "${LANGUAGES[@]}"; do
-    running "$lang" && restart+=("$lang")
+    if running "$lang"; then restart+=("$lang"); fi
   done
   if [[ ${#restart[@]} -gt 0 ]]; then
     info "stopping ${restart[*]} for the update"
@@ -331,9 +467,11 @@ do_update() {
 
   if ! "$installer" --prefix "$LD_HOME" "$@"; then
     [[ -n "$unpacked" ]] && rm -rf "$unpacked"
+    [[ -n "$downloaded" ]] && rm -rf "$downloaded"
     die "the install failed — nothing was started. The previous configs and models are untouched."
   fi
   [[ -n "$unpacked" ]] && rm -rf "$unpacked"
+  [[ -n "$downloaded" ]] && rm -rf "$downloaded"
 
   if ! for_each do_check all; then
     die "the updated install does not check out — nothing was started. Fix the reported problems, then 'start all'."

@@ -207,26 +207,50 @@ and the two ports.
 ## Updating
 
 ```bash
-local-dictation-server update local-dictation-server-0.1.4.tar.gz
+local-dictation-server update
 ```
 
-That is the whole upgrade. It stops whatever is running, installs the new tree
-over the same prefix, checks the result, and starts again **exactly what was
-running** — a language you had deliberately stopped stays stopped. If the install
-or the check fails, nothing is started and the reason is printed; your configs
-and models are untouched either way.
+That is the whole upgrade. With no argument it asks the release page for the
+newest server tarball, downloads it, and checks it against the release's
+published `SHA256SUMS`. Then it stops whatever is running, installs over the
+same prefix, checks the result, and starts again **exactly what was running** —
+a language you had deliberately stopped stays stopped. If the download, the
+install or the check fails, nothing is started and the reason is printed; your
+configs and models are untouched either way.
 
-Point it at an unpacked directory instead of a tarball if you already have one:
+```
+installed 0.1.4, latest 0.1.5
+downloading local-dictation-server-0.1.5.tar.gz
+checksum ok
+stopping ko en for the update
+...
+installed  0.1.5  (/home/you/local-dictation)
+ko         0.1.5  running
+en         0.1.5  running
+```
+
+**Already at the latest, and it says so and stops** — nothing is restarted, so
+this is safe to run whenever you wonder, or on a schedule.
+
+The checksum is the release's own, so it catches a truncated or corrupted
+download. It is not a signature: the trust here is in HTTPS and in the release.
+
+Point it at a file or a directory instead when the host has no egress, or when
+you want a particular version:
 
 ```bash
-local-dictation-server update ~/downloads/local-dictation-server-0.1.4
+local-dictation-server update ~/downloads/local-dictation-server-0.1.5.tar.gz
 ```
+
+`update --force` reinstalls the version you already have — useful after a
+half-finished install. `LD_RELEASE_REPO=owner/name` points the lookup at a fork
+or an internal mirror.
 
 Extra arguments go through to the installer, so a non-default link directory
 survives an update:
 
 ```bash
-local-dictation-server update local-dictation-server-0.1.4.tar.gz --link ~/bin
+local-dictation-server update --link ~/bin
 ```
 
 Afterwards, and any time you want to know whether the running processes match

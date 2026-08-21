@@ -82,6 +82,7 @@ directly. That is the unwrapped script, and it reads every variable below.
 | `LD_LOG_DIR` | `$LD_HOME/log` | Log files; must be writable by you |
 | `LD_BACKEND` | `whisper` | `fake` starts without a model, for plumbing checks |
 | `LD_START_TIMEOUT` | `15` | Seconds `start` watches for an early exit; `0` not to wait |
+| `LD_RELEASE_REPO` | `dennis2lee/local-dictation` | Where `update` with no argument looks for a release |
 
 `start` and `check` first confirm that `LD_PYTHON` can import what the server
 needs. An interpreter without them produces a traceback out of `app/main.py`
@@ -90,9 +91,22 @@ missing, and that re-running the installer over this prefix puts them there.
 
 ## Configuration
 
-One YAML file per language, in `$LD_CONFIG_DIR`. Every setting can also be
-overridden by an environment variable, which is how a host-specific path gets
-injected without editing a shipped file:
+One YAML file per language, in `$LD_CONFIG_DIR`. Changing any setting is the
+same three steps — edit the file, check it, restart that language:
+
+```bash
+$EDITOR ~/local-dictation/config/server-ko.yaml
+```
+
+```bash
+local-dictation-server check ko && local-dictation-server restart ko
+```
+
+Both files, and `all`, when the setting should apply to both. An update never
+overwrites a config you have edited, so these survive upgrades.
+
+Every setting can also be overridden by an environment variable, which is how a
+host-specific value gets injected without editing a shipped file:
 
 ```bash
 LOCAL_DICTATION_MODEL__PATH=/mnt/models/large-v3-turbo local-dictation-server restart all
@@ -148,6 +162,31 @@ In standalone mode none of this applies: the client starts the server itself and
 leaves the ports at `0`, which means "pick a free one at startup". Pin them in
 **Settings → This computer** only if something else on the machine needs those
 numbers to be predictable.
+
+### Changing how many sessions a server accepts
+
+```yaml
+# <prefix>/config/server-ko.yaml
+limits:
+  max_sessions: 1
+```
+
+`max_sessions` is a hard gate, not a queue: the session over the limit is
+refused with `server_busy` and the client shows a recoverable error. That is
+deliberate, and [Capacity](#capacity) is why — a decoder already at its limit
+does not get faster by being given more work.
+
+**Raise it only after measuring.** `rtf_p95` on `/status` is decode wall-clock
+over audio duration; it has to stay below 1.0 for one session before a second is
+safe, because above 1.0 the decoder is falling behind the microphone and every
+session misses the latency budget together. Eight performance cores hold one
+`large-v3-turbo` session comfortably.
+
+Lower it to 1 on a laptop that is also doing other work. Setting it to 0 is
+rejected at startup.
+
+The two language servers count separately: `max_sessions: 2` in each is four
+concurrent sessions on the machine, which is usually not what someone means.
 
 ### Settings worth understanding
 
@@ -230,10 +269,34 @@ takes a deliberate edit from either starting point, which is the point.
 ## Upgrading
 
 ```bash
-local-dictation-server update local-dictation-server-<version>.tar.gz
+local-dictation-server update
 ```
 
-Stop, install over the same prefix, check, start again exactly what was running.
+With no argument it asks the release page for the newest server tarball,
+downloads it, checks it against the release's published `SHA256SUMS`, and
+upgrades. If the installed version is already the latest it says so and stops
+there — nothing is restarted, so running this on a schedule costs a request and
+no downtime.
+
+```
+installed 0.1.4, latest 0.1.5
+downloading local-dictation-server-0.1.5.tar.gz
+checksum ok
+stopping ko en for the update
+```
+
+Pass a path instead when the host has no egress, or when you want a specific
+version:
+
+```bash
+local-dictation-server update ~/downloads/local-dictation-server-0.1.5.tar.gz
+```
+
+`update --force` reinstalls the version you already have. `LD_RELEASE_REPO`
+points the lookup at a fork or a mirror.
+
+Either way: stop, install over the same prefix, check, start again exactly what
+was running.
 Doing it in that order is the point of the command: installing under a live
 server leaves a process running code that is no longer on disk, and starting
 before checking starts something that cannot serve. If either the install or the
