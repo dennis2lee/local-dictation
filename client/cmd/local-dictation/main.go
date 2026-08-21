@@ -47,7 +47,7 @@ func main() {
 	stateDir := filepath.Dir(path)
 
 	if *check {
-		os.Exit(runCheck(settings, path, stateDir))
+		os.Exit(runCheck(settings, path))
 	}
 
 	application, err := ui.New(ui.Options{
@@ -90,7 +90,7 @@ func loadSettings(configPath string) (config.Config, string, error) {
 // runCheck is what an installer or a support request runs. It never opens a
 // window and never starts a session; it reports each prerequisite separately so
 // the failing one is obvious.
-func runCheck(settings config.Config, settingsPath, stateDir string) int {
+func runCheck(settings config.Config, settingsPath string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
