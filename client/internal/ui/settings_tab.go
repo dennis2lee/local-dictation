@@ -38,6 +38,7 @@ type settingsTab struct {
 
 	// Local mode
 	modelPath  *widget.Entry
+	draftPath  *widget.Entry
 	vadPath    *widget.Entry
 	pythonPath *widget.Entry
 	cpuThreads *widget.Entry
@@ -127,6 +128,8 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 	)
 
 	s.modelPath = entry(settings.Local.ModelPath, config.DefaultModelPath())
+	s.draftPath = entry(settings.Local.DraftModelPath,
+		"optional: a small model (base) for sub-second partials")
 	s.vadPath = entry(settings.Local.VadModelPath, "optional: silero_vad.onnx")
 	s.pythonPath = entry(settings.Local.PythonPath, "optional: leave empty to find Python automatically")
 	s.cpuThreads = entry(threadsText(settings.Local.CPUThreads), "0 = let the decoder choose")
@@ -136,6 +139,7 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 	s.localBox = container.NewVBox(
 		widget.NewForm(
 			widget.NewFormItem("Model directory", s.modelPath),
+			widget.NewFormItem("Draft model directory", s.draftPath),
 			widget.NewFormItem("Silero VAD file", s.vadPath),
 			widget.NewFormItem("Python", s.pythonPath),
 			widget.NewFormItem("CPU threads", s.cpuThreads),
@@ -417,6 +421,7 @@ func (s *settingsTab) onSave() {
 	settings.Remote.TLS.ClientKey = s.clientKey.Text
 
 	settings.Local.ModelPath = s.modelPath.Text
+	settings.Local.DraftModelPath = s.draftPath.Text
 	settings.Local.VadModelPath = s.vadPath.Text
 	settings.Local.PythonPath = s.pythonPath.Text
 	settings.Local.CPUThreads = parsePort(s.cpuThreads.Text)
@@ -438,7 +443,7 @@ func (s *settingsTab) onSave() {
 func (s *settingsTab) setEditable(editable bool) {
 	widgets := []fyne.Disableable{
 		s.mode, s.host, s.koreanPort, s.englishPort, s.useTLS, s.caCert,
-		s.clientCert, s.clientKey, s.modelPath, s.vadPath, s.pythonPath,
+		s.clientCert, s.clientKey, s.modelPath, s.draftPath, s.vadPath, s.pythonPath,
 		s.cpuThreads, s.microphone, s.testButton, s.shortcutKey, s.saveButton,
 	}
 	for _, check := range s.modifierChecks {

@@ -41,6 +41,7 @@ async def ready(request: Request) -> JSONResponse:
         "status": "ready" if state.ready and not state.shutting_down else "not_ready",
         "language": state.settings.language,
         "model": state.transcriber.name,
+        "draft_model": state.draft.name if state.draft else None,
         "version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "sessions": {

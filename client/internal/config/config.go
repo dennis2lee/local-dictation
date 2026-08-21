@@ -69,6 +69,11 @@ type Local struct {
 	ServerDir string `json:"server_dir"`
 	// ModelPath is the CTranslate2 model directory — see docs/model-setup.md.
 	ModelPath string `json:"model_path"`
+	// DraftModelPath is an optional second, small model (e.g. `base`) that
+	// produces the partial text while ModelPath produces the committed text.
+	// It is what brings the first partial from ~3.7 s down to under one
+	// second — see docs/latency.md. Empty runs a single model.
+	DraftModelPath string `json:"draft_model_path"`
 	// VadModelPath is silero_vad.onnx. Empty falls back to the energy detector.
 	VadModelPath string `json:"vad_model_path"`
 	// Ports on 127.0.0.1. 0 means "pick a free one at startup", which avoids

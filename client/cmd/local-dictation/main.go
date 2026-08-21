@@ -24,7 +24,7 @@ import (
 // version is stamped at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.1.0"
+var version = "0.1.1"
 
 func main() {
 	var (
@@ -174,6 +174,14 @@ func checkLocalServer(ctx context.Context, settings config.Config, report func(s
 		report("model", false, fmt.Sprintf("%s has no model.bin; see docs/model-setup.md", settings.Local.ModelPath))
 	} else {
 		report("model", true, settings.Local.ModelPath)
+	}
+
+	if draft := settings.Local.DraftModelPath; draft != "" {
+		if _, err := os.Stat(filepath.Join(draft, "model.bin")); err != nil {
+			report("draft model", false, fmt.Sprintf("%s has no model.bin; see docs/latency.md", draft))
+		} else {
+			report("draft model", true, draft)
+		}
 	}
 }
 

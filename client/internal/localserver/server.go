@@ -3,6 +3,7 @@ package localserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -18,11 +19,14 @@ import (
 
 // Options describes one language server to run on this machine.
 type Options struct {
-	PythonPath   string
-	ServerDir    string // the directory containing the `app` package
-	ModelPath    string
-	VadModelPath string
-	Language     protocol.Language
+	PythonPath string
+	ServerDir  string // the directory containing the `app` package
+	ModelPath  string
+	// DraftModelPath, when set, is a second, small model that produces the
+	// partial text while ModelPath produces the committed text.
+	DraftModelPath string
+	VadModelPath   string
+	Language       protocol.Language
 	// Port 0 asks the OS for a free one, which avoids colliding with whatever
 	// else the user happens to be running.
 	Port       int
@@ -77,6 +81,13 @@ func Start(ctx context.Context, options Options) (*Server, error) {
 	}
 	if _, err := os.Stat(options.ModelPath); err != nil {
 		return nil, fmt.Errorf("model directory %s is not readable: %w", options.ModelPath, err)
+	}
+	if options.DraftModelPath != "" {
+		// A typo here must fail loudly: silently running without the draft
+		// would look identical, just with several times the latency.
+		if _, err := os.Stat(options.DraftModelPath); err != nil {
+			return nil, fmt.Errorf("draft model directory %s is not readable: %w", options.DraftModelPath, err)
+		}
 	}
 
 	port := options.Port
@@ -177,8 +188,16 @@ func (s *Server) WaitReady(ctx context.Context) error {
 	defer ticker.Stop()
 
 	for {
-		if ready, err := s.probe(ctx, client, url); err == nil && ready {
+		ready, err := s.probe(ctx, client, url)
+		if err == nil && ready {
 			return nil
+		}
+		if errors.Is(err, errWrongServer) {
+			// Polling cannot fix a port that something else owns; five more
+			// minutes of it would just hide the message that explains the fix.
+			return fmt.Errorf("the %s server could not start: %w "+
+				"(set a different port, or 0 for a free one, in Settings)",
+				s.options.Language, err)
 		}
 
 		select {
@@ -217,10 +236,15 @@ func (s *Server) probe(ctx context.Context, client *http.Client, url string) (bo
 	if body.Language != string(s.options.Language) {
 		// Something else is already listening on this port. Better to say so
 		// than to dictate Korean into an English server.
-		return false, fmt.Errorf("port %d serves %q, expected %q", s.port, body.Language, s.options.Language)
+		return false, fmt.Errorf("%w: port %d serves %q, not %q",
+			errWrongServer, s.port, body.Language, s.options.Language)
 	}
 	return body.Status == "ready", nil
 }
+
+// errWrongServer means the port answered like a server for something else —
+// a condition that waiting longer can never repair.
+var errWrongServer = errors.New("another server owns the port")
 
 // Stop shuts the process down, escalating to a kill if it will not go.
 func (s *Server) Stop(ctx context.Context) error {
@@ -312,6 +336,9 @@ func writeServerConfig(path string, options Options, port int) error {
 		port, "local-dictation-"+string(options.Language))
 	fmt.Fprintf(&builder, "model:\n  path: %q\n  device: \"cpu\"\n  compute_type: \"int8\"\n  language: %q\n",
 		options.ModelPath, string(options.Language))
+	if options.DraftModelPath != "" {
+		fmt.Fprintf(&builder, "  draft_path: %q\n", options.DraftModelPath)
+	}
 	fmt.Fprintf(&builder, "  beam_size: 1\n  cpu_threads: %d\n  num_workers: 1\n", options.CPUThreads)
 	fmt.Fprintf(&builder, "streaming:\n  chunk_ms: 600\n  silence_ms: 600\n  vad: %q\n", vad)
 	if vadPath != "" {

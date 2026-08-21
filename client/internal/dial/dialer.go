@@ -94,13 +94,14 @@ func (d *Dialer) Shutdown(ctx context.Context) error { return d.local.StopAll(ct
 
 func managerSettings(settings config.Config, stateDir string) localserver.ManagerSettings {
 	return localserver.ManagerSettings{
-		PythonPath:   settings.Local.PythonPath,
-		ServerDir:    settings.Local.ServerDir,
-		ModelPath:    settings.Local.ModelPath,
-		VadModelPath: settings.Local.VadModelPath,
-		StateDir:     stateDir,
-		CPUThreads:   settings.Local.CPUThreads,
-		KoreanPort:   settings.Local.KoreanPort,
-		EnglishPort:  settings.Local.EnglishPort,
+		PythonPath:     settings.Local.PythonPath,
+		ServerDir:      settings.Local.ServerDir,
+		ModelPath:      settings.Local.ModelPath,
+		DraftModelPath: settings.Local.DraftModelPath,
+		VadModelPath:   settings.Local.VadModelPath,
+		StateDir:       stateDir,
+		CPUThreads:     settings.Local.CPUThreads,
+		KoreanPort:     settings.Local.KoreanPort,
+		EnglishPort:    settings.Local.EnglishPort,
 	}
 }

@@ -20,7 +20,6 @@ import (
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/widget"
 
 	"github.com/dennis2lee/local-dictation/client/internal/audio"
 	"github.com/dennis2lee/local-dictation/client/internal/config"
@@ -28,7 +27,6 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/hotkey"
 	"github.com/dennis2lee/local-dictation/client/internal/input"
 	"github.com/dennis2lee/local-dictation/client/internal/platform"
-	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 	"github.com/dennis2lee/local-dictation/client/internal/session"
 )
 
@@ -241,8 +239,6 @@ func (d disabledPlatform) CancelComposition() error   { return nil }
 func (d disabledPlatform) Close() error               { return nil }
 
 var _ input.Platform = disabledPlatform{}
-var _ = protocol.Korean
-var _ = widget.NewLabel
 
 // focusWatcher adapts the platform watcher to the session's interface, mapping
 // "not supported here" onto a nil watcher rather than a broken one.

@@ -136,6 +136,7 @@ func TestStandaloneModeTranscribesRealAudio(t *testing.T) {
 	settings.Mode = config.ModeLocal
 	settings.Language = protocol.Language(envOr("LOCAL_DICTATION_TEST_LANGUAGE", "en"))
 	settings.Local.ModelPath = modelPath
+	settings.Local.DraftModelPath = os.Getenv("LOCAL_DICTATION_TEST_DRAFT")
 	settings.Local.VadModelPath = os.Getenv("LOCAL_DICTATION_TEST_VAD")
 	settings.Local.PythonPath = os.Getenv("LOCAL_DICTATION_TEST_PYTHON")
 	settings.Local.ServerDir = os.Getenv("LOCAL_DICTATION_TEST_SERVER_DIR")

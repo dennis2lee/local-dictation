@@ -21,18 +21,26 @@ import (
 type Manager struct {
 	mu       sync.Mutex
 	settings ManagerSettings
-	python   string
-	servers  map[protocol.Language]*Server
+	// python and serverDir are derived by Prepare from settings.PythonPath and
+	// settings.ServerDir. They live apart from the settings so that comparing
+	// old and new settings in Update compares what the user configured, not
+	// what resolution produced.
+	python    string
+	serverDir string
+	servers   map[protocol.Language]*Server
 }
 
 // ManagerSettings is the subset of client configuration local mode needs.
 type ManagerSettings struct {
-	PythonPath   string
-	ServerDir    string
-	ModelPath    string
-	VadModelPath string
-	StateDir     string
-	CPUThreads   int
+	PythonPath string
+	ServerDir  string
+	ModelPath  string
+	// DraftModelPath is the optional small model that produces partial text;
+	// see docs/latency.md. Empty runs a single model.
+	DraftModelPath string
+	VadModelPath   string
+	StateDir       string
+	CPUThreads     int
 	// Fixed ports, or 0 to choose free ones.
 	KoreanPort  int
 	EnglishPort int
@@ -73,7 +81,7 @@ func (m *Manager) Prepare(ctx context.Context, progress func(string)) error {
 
 	m.mu.Lock()
 	m.python = python
-	m.settings.ServerDir = serverDir
+	m.serverDir = serverDir
 	m.mu.Unlock()
 	return nil
 }
@@ -92,7 +100,7 @@ func (m *Manager) Ensure(ctx context.Context, language protocol.Language, progre
 			running = false
 		}
 	}
-	settings, python := m.settings, m.python
+	settings, python, serverDir := m.settings, m.python, m.serverDir
 	m.mu.Unlock()
 
 	if running {
@@ -109,14 +117,15 @@ func (m *Manager) Ensure(ctx context.Context, language protocol.Language, progre
 	}
 
 	server, err := Start(ctx, Options{
-		PythonPath:   python,
-		ServerDir:    settings.ServerDir,
-		ModelPath:    settings.ModelPath,
-		VadModelPath: settings.VadModelPath,
-		Language:     language,
-		Port:         port,
-		CPUThreads:   settings.CPUThreads,
-		StateDir:     settings.StateDir,
+		PythonPath:     python,
+		ServerDir:      serverDir,
+		ModelPath:      settings.ModelPath,
+		DraftModelPath: settings.DraftModelPath,
+		VadModelPath:   settings.VadModelPath,
+		Language:       language,
+		Port:           port,
+		CPUThreads:     settings.CPUThreads,
+		StateDir:       settings.StateDir,
 	})
 	if err != nil {
 		return nil, err
@@ -176,17 +185,17 @@ func (m *Manager) StopAll(ctx context.Context) error {
 // loaded once at startup.
 func (m *Manager) Update(ctx context.Context, settings ManagerSettings) error {
 	m.mu.Lock()
-	restartNeeded := m.settings.ModelPath != settings.ModelPath ||
-		m.settings.VadModelPath != settings.VadModelPath ||
-		m.settings.PythonPath != settings.PythonPath ||
-		m.settings.ServerDir != settings.ServerDir ||
-		m.settings.CPUThreads != settings.CPUThreads ||
-		m.settings.KoreanPort != settings.KoreanPort ||
-		m.settings.EnglishPort != settings.EnglishPort
-	m.settings = settings
-	if m.settings.PythonPath != settings.PythonPath {
+	// Every field feeds either the generated config or the process
+	// environment, so any difference means the running servers are stale.
+	restartNeeded := m.settings != settings
+	// The cached interpreter and resolved directory are derived from these
+	// two; comparing *before* the assignment is what makes a change actually
+	// take effect rather than being compared against itself.
+	if m.settings.PythonPath != settings.PythonPath || m.settings.ServerDir != settings.ServerDir {
 		m.python = ""
+		m.serverDir = ""
 	}
+	m.settings = settings
 	m.mu.Unlock()
 
 	if restartNeeded {

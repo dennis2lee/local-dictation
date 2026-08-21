@@ -71,6 +71,17 @@ mv /opt/local-dictation/models/large-v3 /opt/local-dictation/models/base
 
 `base` is 145 MB and adds roughly 200 MB of resident memory.
 
+In standalone mode the same thing is one field in the app: put the small
+model's directory in **Settings → Draft model directory** and save. The client
+passes it through to the server it starts, and **Test connections** confirms it
+with "drafting with …".
+
+One caveat for very long utterances: the decode window is capped (12 s by
+default, `streaming.max_window_seconds`). When one utterance outgrows it, the
+accurate model decodes the window once mid-utterance so that the text scrolled
+out of the window is committed from *its* reading, never the draft's. That pass
+costs one extra accurate decode per window length of continuous speech.
+
 ### Choosing the draft model
 
 The draft only has to be good enough to *look* right while someone is speaking.
