@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "notes": "Partial text now appears in under a second.",
+  "published": "2026-09-01",
+  "artifacts": {
+    "darwin/arm64": {
+      "url": "https://dist.internal/local-dictation/LocalDictation-0.2.0.pkg",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 23068672
+    },
+    "darwin/amd64": {
+      "url": "https://dist.internal/local-dictation/LocalDictation-0.2.0.pkg",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 23068672
+    },
+    "windows/amd64": {
+      "url": "https://dist.internal/local-dictation/LocalDictation-0.2.0-x64.msi",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "size": 26214400
+    }
+  },
+  "signature": ""
+}

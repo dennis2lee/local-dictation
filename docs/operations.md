@@ -150,3 +150,30 @@ detector against raw signal level, so a model file that is missing or the wrong
 export reports itself instead of quietly treating every session as silence.
 
 **Latency is bad.** [latency.md](latency.md). Start with `model.draft_path`.
+
+## Publishing an update
+
+Clients only install what your key signed. Generate the key once, keep the
+private half wherever your release secrets live, and put the public half in each
+client's settings:
+
+```bash
+cd client && go run ./cmd/sign-manifest keygen -out release-key
+```
+
+Then, per release:
+
+```bash
+go run ./cmd/sign-manifest hash dist/LocalDictation-0.2.0.pkg dist/LocalDictation-0.2.0-x64.msi
+$EDITOR manifest.json     # start from client/cmd/sign-manifest/manifest.example.json
+go run ./cmd/sign-manifest sign -key release-key.private -manifest manifest.json
+```
+
+Signing refuses a manifest that is not publishable — a plain-HTTP URL, a missing
+hash, a zero size — and re-verifies the file it just wrote, so a serialisation
+difference between signing and publishing cannot reach a user's machine. Serve
+`manifest.json` and the artefacts from the internal HTTPS URL in
+`update.manifest_url`.
+
+A manifest whose signature does not verify is refused outright by the client,
+not reported as a warning.
