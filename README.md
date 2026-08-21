@@ -104,7 +104,7 @@ cd server && python3 -m venv .venv && .venv/bin/pip install -e '.[dev,inference]
 cd client && go test ./... && go build ./cmd/local-dictation
 
 # Everything, for release
-build/release.sh --version 0.1.0
+build/release.sh --version 0.1.1
 ```
 
 `build/release.sh` runs both test suites first, then produces the server

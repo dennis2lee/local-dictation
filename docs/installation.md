@@ -24,7 +24,7 @@ That is one command, and it is [step 3](#3-install-a-speech-model) below.
 Download `LocalDictation-<version>.pkg` and open it, or:
 
 ```bash
-sudo installer -pkg LocalDictation-0.1.0.pkg -target /
+sudo installer -pkg LocalDictation-0.1.1.pkg -target /
 ```
 
 A `.dmg` is also published if you prefer to drag the app to Applications.
@@ -44,7 +44,7 @@ Run `LocalDictation-<version>-x64.msi`. It installs to
 For an unattended install:
 
 ```powershell
-msiexec /i LocalDictation-0.1.0-x64.msi /qn /l*v install.log
+msiexec /i LocalDictation-0.1.1-x64.msi /qn /l*v install.log
 ```
 
 ### What the installer does not include
@@ -181,37 +181,53 @@ Anything marked `FAIL` names what to fix. Then read [usage.md](usage.md).
 Skip this unless you are running servers other people connect to.
 
 ```bash
-tar xzf local-dictation-server-0.1.0.tar.gz
-cd local-dictation-server-0.1.0
-sudo ./install.sh                      # into /opt/local-dictation
+tar xzf local-dictation-server-0.1.1.tar.gz
 ```
-
-Or without root:
 
 ```bash
-./install.sh --prefix ~/local-dictation --user
+cd local-dictation-server-0.1.1 && ./install.sh
 ```
+
+That needs no privileges: it installs into `~/local-dictation` and links the
+command into `~/.local/bin`. **Root is not required to run a speech server**, and
+an install you own is the one where `start`, `stop` and `fetch-model` also need
+no `sudo`.
+
+| | `./install.sh` | `sudo ./install.sh` |
+| --- | --- | --- |
+| Prefix | `~/local-dictation` | `/opt/local-dictation` |
+| Command linked into | `~/.local/bin` | `/usr/local/bin` |
+| Listens on | `127.0.0.1` | `0.0.0.0` |
+| TLS | off | on, certificates expected in `$PREFIX/tls` |
+| Everyday commands need sudo | no | no — `run/`, `log/` and `models/` are handed to you |
+
+`--prefix /srv/dictation` puts it anywhere you can write. Whichever you choose,
+the generated configs point **inside that prefix**, so there are no paths to
+edit before the first start.
 
 The installer creates the directory layout, builds a virtual environment,
 installs the dependencies and links `local-dictation-server` onto your PATH. It
 does **not** register a system service: the management command runs both
 language servers as background processes, which is all this needs.
 
-Then install a model (step 3) and point both configs at it:
+Then install a model (step 3). The configs already name it:
 
-```yaml
-# /opt/local-dictation/config/server-ko.yaml  and  server-en.yaml
-model:
-  path: "/opt/local-dictation/models/large-v3-turbo"
-  draft_path: "/opt/local-dictation/models/base"      # optional, see latency.md
-streaming:
-  silero_model_path: "/opt/local-dictation/models/silero_vad.onnx"
+```bash
+~/local-dictation/app/scripts/fetch-model.sh large-v3-turbo --dest ~/local-dictation/models
 ```
 
-Start them:
+Check, then start. `check` opens every file the configs name, so a wrong path is
+a message rather than a server that dies seconds later:
+
+```bash
+local-dictation-server check all
+```
 
 ```bash
 local-dictation-server start all
+```
+
+```bash
 local-dictation-server health all
 ```
 

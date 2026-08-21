@@ -18,8 +18,8 @@ PyTorch checkpoints and will not work.
 | Relative CPU speed | baseline | several times faster |
 | Accuracy | highest | slightly lower |
 
-`large-v3` is what the project plan specifies and what the shipped configs point
-at. **On CPU, start with `large-v3-turbo` anyway** — the plan's largest technical
+`large-v3` is what the project plan specifies. **The shipped configs point at
+`large-v3-turbo` anyway** — the plan's largest technical
 risk is exactly that `large-v3` cannot hold the first-partial latency budget on
 CPU, and turbo is the mitigation that does not require new hardware. Turbo cuts
 the decoder from 32 layers to 4, so it loses some accuracy; how much depends on

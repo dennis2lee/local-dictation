@@ -34,9 +34,9 @@ class ServerSettings:
 
 @dataclass(frozen=True)
 class ModelSettings:
-    #: Local directory holding the converted large-v3 model. Never a HuggingFace
+    #: Local directory holding a CTranslate2 conversion. Never a HuggingFace
     #: repo id: the server must not reach the internet.
-    path: str = "/opt/local-dictation/models/large-v3"
+    path: str = "/opt/local-dictation/models/large-v3-turbo"
     device: str = "cpu"
     compute_type: str = "int8"
     language: Language = "ko"

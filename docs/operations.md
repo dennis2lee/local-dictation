@@ -3,6 +3,10 @@
 For whoever runs the shared servers. If you use standalone mode, you do not need
 this file — the client manages its own server.
 
+None of it needs root. `./install.sh` without sudo installs into a prefix you
+own, and then every command below is yours to run — see
+[installation.md](installation.md).
+
 ## The shape of it
 
 Two independent processes, one per language, deliberately not one process
@@ -32,12 +36,38 @@ local-dictation-server stop all
 server whether it can actually transcribe — a process can be running while the
 model is still loading, and that difference is usually what you are checking.
 
-`check` validates both config files without binding a port; run it before a
-restart.
+`check` validates both config files and opens every file they name — the model,
+the VAD model, the certificates — without binding a port. Run it before a
+restart: a model directory that is not there is a message here rather than a
+server that exits four seconds after `start` reported it as up.
+
+`start` waits up to `LD_START_TIMEOUT` seconds (default 15) for the new process
+to either fail or bind its port, so a start that cannot work is reported as a
+failure with the reason from the log. Loading a model takes minutes and happens
+before the bind, so a real start usually reaches that timeout and says it is
+still loading; `health` is what answers when it can transcribe.
+
+## Where things live
+
+The management command finds everything through `LD_*`. A wrapper written by the
+installer sets them to the prefix you installed into, so you only set them by
+hand when running from a checkout — or to point one command somewhere else,
+which they still allow.
+
+| Variable | Default | What it names |
+| --- | --- | --- |
+| `LD_HOME` | `/opt/local-dictation` | The install root the rest default to |
+| `LD_APP_DIR` | `$LD_HOME/app` | The directory *containing* `app/` |
+| `LD_CONFIG_DIR` | `$LD_HOME/config` | `server-ko.yaml` and `server-en.yaml` |
+| `LD_PYTHON` | `$LD_HOME/venv/bin/python` | The interpreter |
+| `LD_RUN_DIR` | `$LD_HOME/run` | PID files; must be writable by you |
+| `LD_LOG_DIR` | `$LD_HOME/log` | Log files; must be writable by you |
+| `LD_BACKEND` | `whisper` | `fake` starts without a model, for plumbing checks |
+| `LD_START_TIMEOUT` | `15` | Seconds `start` watches for an early exit; `0` not to wait |
 
 ## Configuration
 
-One YAML file per language, in `$LD_HOME/config`. Every setting can also be
+One YAML file per language, in `$LD_CONFIG_DIR`. Every setting can also be
 overridden by an environment variable, which is how a host-specific path gets
 injected without editing a shipped file:
 
@@ -45,10 +75,15 @@ injected without editing a shipped file:
 LOCAL_DICTATION_MODEL__PATH=/mnt/models/large-v3-turbo local-dictation-server restart all
 ```
 
-The pattern is `LOCAL_DICTATION_<SECTION>__<KEY>`, upper-cased. An unknown
-section or key is an error at startup rather than a silently ignored typo —
-which matters most for `logging.store_audio`, where a misspelling would look
-like it had been set.
+The pattern is `LOCAL_DICTATION_<SECTION>__<KEY>`, upper-cased, with two
+underscores and exactly two levels. The sections are `SERVER`, `MODEL`,
+`STREAMING`, `SECURITY`, `LIMITS` and `LOGGING`. A key that does not exist in a
+real section is an error at startup rather than a silently ignored typo — which
+matters most for `logging.store_audio`, where a misspelling would look like it
+had been set. `LOCAL_DICTATION_CONFIG` names the config file itself, which is
+what `--config` does on the command line.
+
+Precedence runs command line, then environment, then YAML, then the defaults.
 
 ### Settings worth understanding
 
@@ -126,7 +161,7 @@ relies on it.
 ```bash
 local-dictation-server stop all
 tar xzf local-dictation-server-<version>.tar.gz
-cd local-dictation-server-<version> && sudo ./install.sh
+cd local-dictation-server-<version> && ./install.sh --prefix <your prefix>
 local-dictation-server check all && local-dictation-server start all
 local-dictation-server health all
 ```
@@ -136,9 +171,18 @@ yours. Models are untouched.
 
 ## When something goes wrong
 
-**A server will not start.** `local-dictation-server logs ko` has the reason.
-The usual causes are a model path that does not exist and a TLS file that is not
-readable by the service account.
+**A server will not start.** `start` prints the tail of the log that explains
+it, and `local-dictation-server logs ko` has the rest. The usual causes are a
+model path that does not exist, a TLS file that is not readable, and a port
+already in use.
+
+**`start` says a directory is not writable.** A `sudo ./install.sh` from before
+this was fixed left `run/` and `log/` owned by root while documenting every
+command without sudo. Take them back:
+
+```bash
+sudo chown -R "$(id -un)" /opt/local-dictation/{run,log,models}
+```
 
 **`health` says `not_ready` for a long time.** The model is loading. `large-v3`
 from a cold page cache takes a while; `/status` flips to `ready` when the warmup

@@ -6,9 +6,11 @@ server:
   instance_name: "local-dictation-ko"
 
 model:
-  # A local directory holding the CTranslate2-converted large-v3. Never a
-  # HuggingFace repo id: the host has no internet egress.
-  path: "/opt/local-dictation/models/large-v3"
+  # A local directory holding a CTranslate2 conversion. Never a HuggingFace repo
+  # id: the host has no internet egress. This points at large-v3-turbo, which is
+  # what the installer tells you to download and what holds the latency budget on
+  # CPU; read docs/model-setup.md before switching to large-v3.
+  path: "/opt/local-dictation/models/large-v3-turbo"
   device: "cpu"
   compute_type: "int8"
   language: "ko"
