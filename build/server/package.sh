@@ -27,6 +27,21 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
+# The VERSION file in the tarball and the version the server reports at /health
+# have to be the same number, or `local-dictation-server version` shows a
+# mismatch that no restart can fix. The code is the source of truth, so this is
+# also what catches a release tag that ran ahead of a forgotten version bump.
+check_version_matches() {
+  local file="$1" found="$2"
+  [[ -n "$found" ]] || die "could not read a version from $file"
+  [[ "$found" == "$VERSION" ]] || die \
+    "--version $VERSION does not match $file ($found); bump the code, or tag the version it already has"
+}
+check_version_matches "server/app/__init__.py" \
+  "$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$ROOT/server/app/__init__.py")"
+check_version_matches "server/pyproject.toml" \
+  "$(sed -n 's/^version = "\(.*\)"/\1/p' "$ROOT/server/pyproject.toml")"
+
 NAME="local-dictation-server-$VERSION"
 STAGE="$OUTPUT/.$NAME"
 TARBALL="$OUTPUT/$NAME.tar.gz"
