@@ -40,7 +40,13 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - uses: actions/setup-go@v5
-        with: { go-version-file: client/go.mod }
+        # go.sum lives under client/, and without being told so setup-go looks
+        # for it at the repository root, fails to find it, and silently runs
+        # with the module cache disabled — every job re-downloading Fyne and its
+        # C dependencies from scratch.
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
       - name: Server tests
         working-directory: server
         run: |
@@ -76,7 +82,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version-file: client/go.mod }
+        # go.sum lives under client/, and without being told so setup-go looks
+        # for it at the repository root, fails to find it, and silently runs
+        # with the module cache disabled — every job re-downloading Fyne and its
+        # C dependencies from scratch.
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
       - name: Build the package
         # Signing identities are optional so a fork can build without secrets.
         # Recipients of an unsigned build clear Gatekeeper by hand.
@@ -103,7 +115,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
-        with: { go-version-file: client/go.mod }
+        # go.sum lives under client/, and without being told so setup-go looks
+        # for it at the repository root, fails to find it, and silently runs
+        # with the module cache disabled — every job re-downloading Fyne and its
+        # C dependencies from scratch.
+        with:
+          go-version-file: client/go.mod
+          cache-dependency-path: client/go.sum
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Install WiX
