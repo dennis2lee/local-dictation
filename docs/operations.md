@@ -151,6 +151,44 @@ export reports itself instead of quietly treating every session as silence.
 
 **Latency is bad.** [latency.md](latency.md). Start with `model.draft_path`.
 
+## Measuring accuracy and latency
+
+`benchmark.py` streams recordings through the real protocol at real time and
+scores them, so the numbers describe what a user experiences rather than what a
+batch decode of a whole file would suggest.
+
+Write a manifest, one JSON object per line:
+
+```json
+{"audio": "clips/ko-001.wav", "reference": "오늘 오후 세 시에 회의를 시작합니다.", "language": "ko"}
+```
+
+Clips must be 16 kHz mono 16-bit WAV — the format the client sends.
+
+```bash
+/opt/local-dictation/venv/bin/python \
+  /opt/local-dictation/app/scripts/benchmark.py \
+  --manifest cases.jsonl --port 8765 --out report.txt
+```
+
+```
+Accuracy
+  ko: CER 3.2%  WER 29.5%  (2 clip(s))
+
+Latency
+  first partial  p50 0.93s  p95 0.93s   target p95 <= 2.0s — meets
+  finalization   p50 4.59s  p95 4.59s   target p95 <= 1.5s — MISSES
+```
+
+**Read CER for Korean and WER for English.** Korean is written without
+consistent word spacing and Whisper renders numbers as digits, so one "세 시"
+coming back as "3시" moves WER enormously on a short clip while CER barely
+notices — the 29.5% above is almost entirely that. English words are the unit a
+reader perceives, so WER is the honest number there.
+
+Nothing is stored: the report contains your own reference text and the
+hypotheses for the clips you supplied, and nothing reaches the server's logs.
+
 ## Publishing an update
 
 Clients only install what your key signed. Generate the key once, keep the
