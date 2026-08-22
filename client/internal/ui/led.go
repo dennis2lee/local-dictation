@@ -35,8 +35,13 @@ func newLED(caption string) *led {
 	indicator := &led{dot: dot, caption: label}
 	// A Circle has no minimum size of its own, so a GridWrap gives it one and
 	// keeps the dot from collapsing next to the label.
+	//
+	// Centred, because HBox stretches its children to the row's full height and
+	// a GridWrap lays its cell out at the top of whatever it is given. The dot
+	// then floats above the middle of the words beside it — a small thing that
+	// reads as sloppy on the one row someone looks at while dictating.
 	indicator.widget = container.NewHBox(
-		container.NewGridWrap(fyne.NewSize(14, 14), dot),
+		container.NewCenter(container.NewGridWrap(fyne.NewSize(11, 11), dot)),
 		label,
 	)
 	return indicator

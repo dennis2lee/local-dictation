@@ -109,7 +109,10 @@ func newSettingsTab(app *App) *settingsTab {
 }
 
 func (s *settingsTab) content() fyne.CanvasObject {
-	return container.NewPadded(container.NewVScroll(s.body))
+	// The inset is inside the scroll, not around it, so the fields clear the
+	// scroll bar rather than sliding under it when the tab is long enough to
+	// scroll — which this one always is.
+	return container.NewVScroll(inset(s.body))
 }
 
 // -- servers ---------------------------------------------------------------

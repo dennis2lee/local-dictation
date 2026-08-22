@@ -4,12 +4,21 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
 // The three shapes the plan's mockup is built from, so the tabs read as layout
 // rather than as a pile of containers: a panel, a section heading and a chip.
+
+// inset is the margin between a tab's content and the window frame, and it is
+// deliberately wider on the right: that edge carries the scroll bar, and a text
+// field running underneath it looks like the window was cut off rather than
+// laid out.
+func inset(content fyne.CanvasObject) fyne.CanvasObject {
+	return container.New(layout.NewCustomPaddedLayout(10, 12, 14, 22), content)
+}
 
 // panel is the light rounded block the plan puts the status line in — filled,
 // hairline border, generous padding.

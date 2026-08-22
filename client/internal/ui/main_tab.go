@@ -82,7 +82,7 @@ func newMainTab(app *App) *mainTab {
 }
 
 func (m *mainTab) content() fyne.CanvasObject {
-	return container.NewPadded(container.NewVScroll(m.body))
+	return container.NewVScroll(inset(m.body))
 }
 
 // onLanguageChanged is rejected mid-session: the plan locks the language while

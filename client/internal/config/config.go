@@ -152,7 +152,12 @@ func Default() Config {
 			Host:        "",
 			KoreanPort:  8765,
 			EnglishPort: 8766,
-			TLS:         TLS{Enabled: true},
+			// Off, because every server this project ships listens without it.
+			// Defaulting to wss meant the first remote connection anyone tried
+			// failed on a handshake, against a server that was working, with a
+			// checkbox they had no reason to suspect. A site running its own
+			// certificate authority turns it on and fills in the CA.
+			TLS: TLS{Enabled: false},
 		},
 		Local: Local{
 			ModelPath:   DefaultModelPath(),

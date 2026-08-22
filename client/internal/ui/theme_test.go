@@ -28,8 +28,10 @@ func assertColor(t *testing.T, name string, got color.Color, want color.NRGBA) {
 	}
 }
 
-// The plan's mockup is the reference. These are the values read off it, so a
-// change to the palette has to be a deliberate one.
+// The palette is pinned here so a change to it has to be a deliberate one. It
+// started as the plan's mockup and was pulled quieter from there — darker text,
+// greyer chrome, a deeper accent — because bright and friendly is the wrong
+// register for a tool that sits open beside real work.
 func TestTheThemeUsesThePlansPalette(t *testing.T) {
 	applied := planTheme{}
 	for _, want := range []struct {
@@ -125,5 +127,25 @@ func TestTheWindowTitleCarriesTheVersion(t *testing.T) {
 	}
 	if got := windowTitle(""); got != "Local Dictation" {
 		t.Errorf("title without a version is %q, want no trailing space", got)
+	}
+}
+
+// Fyne blends the hover colour over whatever a control already is, so an opaque
+// one does not tint a filled button, it replaces it — which is what turned the
+// blue Save button pale the moment a pointer crossed it, as if it had gone
+// disabled. Pressing is the event worth showing.
+func TestHoveringBarelyShowsAndPressingClearlyDoes(t *testing.T) {
+	applied := planTheme{}
+	_, _, _, hover := rgba(t, applied.Color(theme.ColorNameHover, theme.VariantLight))
+	_, _, _, pressed := rgba(t, applied.Color(theme.ColorNamePressed, theme.VariantLight))
+
+	if hover == 0xFF {
+		t.Fatal("hover is opaque, so it replaces a filled button's colour rather than tinting it")
+	}
+	if hover > 0x20 {
+		t.Errorf("hover alpha is %d — a pointer merely crossing a button should barely show", hover)
+	}
+	if pressed < hover*2 {
+		t.Errorf("pressing (alpha %d) is not clearly stronger than hovering (alpha %d)", pressed, hover)
 	}
 }

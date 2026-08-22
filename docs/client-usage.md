@@ -85,6 +85,19 @@ if the Korean port answers with an English server, the test says so rather than
 letting you dictate Korean into an English model, which produces fluent nonsense
 rather than an error.
 
+**Use TLS (wss)** stays off, and the three certificate fields below it stay
+empty, unless the server you are connecting to has its own certificate
+authority. Every server this project installs listens without TLS, so the
+common case is: address, two ports, nothing else. The certificate fields only
+appear once the switch is on, because three empty boxes read as three things
+left undone.
+
+If the server is on a network you would rather not send audio across in the
+clear, the answer is usually an SSH tunnel rather than certificates — the
+[server install guide](server-install.md#serving-other-machines) has the
+command. Connect to `127.0.0.1` and leave TLS off; SSH is already doing both
+jobs.
+
 ### Microphone
 
 Pick a device, then press **Test microphone** and speak. The bar should move.
