@@ -59,6 +59,24 @@ def _words(tokens: list[str]) -> list[str]:
     return [t.rstrip() for t in tokens]
 
 
+def _same_words_ignoring_case(a: list[str], b: list[str]) -> bool:
+    """Whether two token lists are the same words in the same order.
+
+    Case only. Whisper re-cases the first word of an utterance as it gains
+    context — "The dictation server" becomes "the dictation server" once the
+    sentence turns out to continue — and that is not a revision of anything the
+    user has: it is the same word. Treating it as one closed the utterance and
+    reopened it, so the whole sentence was typed twice.
+
+    Nothing else is folded. A decoder that changes a word has changed the text,
+    and the caller has to rotate rather than quietly overwrite what is on
+    screen.
+    """
+    if len(a) != len(b):
+        return False
+    return [word.casefold() for word in _words(a)] == [word.casefold() for word in _words(b)]
+
+
 @dataclass(frozen=True)
 class AgreementResult:
     #: The committed prefix after this update. Never shorter than before.
@@ -97,12 +115,21 @@ class LocalAgreement:
         tokens = tokenize(hypothesis)
         committed_len = len(self._committed)
 
-        if _words(tokens[:committed_len]) != _words(self._committed):
-            # The decoder revised text the user has already seen committed. We
-            # cannot take it back, so tell the caller to rotate the utterance.
-            self._history.clear()
-            self._history.append(tokens)
-            return AgreementResult(stable=self.committed, partial="", conflict=True)
+        head = tokens[:committed_len]
+        if _words(head) != _words(self._committed):
+            if not _same_words_ignoring_case(head, self._committed):
+                # The decoder revised text the user has already seen committed.
+                # We cannot take it back, so tell the caller to rotate the
+                # utterance.
+                self._history.clear()
+                self._history.append(tokens)
+                return AgreementResult(stable=self.committed, partial="", conflict=True)
+            # Same words, different case. Keep the casing already on screen —
+            # rewriting the hypothesis rather than the commitment is what keeps
+            # `stable` a literal prefix of it, which is the invariant the client
+            # checks before typing anything.
+            tokens[:committed_len] = self._committed
+            hypothesis = "".join(tokens)
 
         # Re-anchor the committed tokens onto this hypothesis so that `stable`
         # stays a literal prefix of it even if the decoder re-spaced a word.
@@ -140,8 +167,11 @@ class LocalAgreement:
         extend what is already committed.
         """
         tokens = tokenize(hypothesis)
-        if _words(tokens[: len(self._committed)]) != _words(self._committed):
-            return AgreementResult(stable=self.committed, partial="", conflict=True)
+        head = tokens[: len(self._committed)]
+        if _words(head) != _words(self._committed):
+            if not _same_words_ignoring_case(head, self._committed):
+                return AgreementResult(stable=self.committed, partial="", conflict=True)
+            tokens[: len(self._committed)] = self._committed
         self._committed = tokens
         self._history.clear()
         return AgreementResult(stable="".join(tokens), partial="", conflict=False)

@@ -485,3 +485,61 @@ async def test_draft_finalize_failure_never_commits_the_draft_guess(streaming_se
             assert not event.final or event.stable == "", (
                 "a final carried text no accurate pass produced"
             )
+
+
+# -- re-casing is not a revision --------------------------------------------
+
+
+def test_recasing_the_first_word_does_not_rotate_the_utterance():
+    """Whisper lowercases the opening word once the sentence turns out to
+    continue: "The dictation server" becomes "the dictation server". That is
+    the same word, not a revision, and treating it as one closed the utterance
+    and reopened it — so the client typed the whole sentence twice.
+
+    Only reachable on a decoder fast enough to commit before the sentence ends,
+    which is why it appeared the day the GPU backend landed and not before.
+    """
+    agreement = LocalAgreement(window=2)
+    agreement.update("The dictation server runs on ")
+    agreement.update("The dictation server runs on the laptop ")
+    committed = agreement.committed
+    assert committed.startswith("The dictation server")
+
+    result = agreement.update("the dictation server runs on the laptop and the client connects.")
+
+    assert not result.conflict, "a case change rotated the utterance"
+    # What the user already has stays exactly as it was typed...
+    assert result.stable.startswith("The dictation server")
+    # ...and stable is still a literal prefix of what the client will type,
+    # which is the invariant it refuses to compose without.
+    assert (result.stable + result.partial).startswith(result.stable)
+    assert "and the client connects." in result.stable + result.partial
+
+
+def test_a_changed_word_is_still_a_conflict():
+    """The narrowness is the point: only case is forgiven. A decoder that
+    changed a word changed the text, and the caller has to rotate rather than
+    quietly overwrite what is on screen."""
+    agreement = LocalAgreement(window=2)
+    agreement.update("the dictation server runs ")
+    agreement.update("the dictation server runs on ")
+    assert agreement.committed.startswith("the dictation server")
+
+    result = agreement.update("the dictation service runs on the laptop")
+
+    assert result.conflict
+
+
+def test_commit_all_forgives_the_same_recasing():
+    """The flush path has to agree with the streaming one, or an utterance that
+    survived every partial pass would rotate at the very end."""
+    agreement = LocalAgreement(window=2)
+    agreement.update("The meeting starts ")
+    agreement.update("The meeting starts at ")
+    assert agreement.committed.startswith("The meeting")
+
+    result = agreement.commit_all("the meeting starts at three o'clock.")
+
+    assert not result.conflict
+    assert result.stable.startswith("The meeting")
+    assert result.stable.endswith("three o'clock.")
