@@ -4,13 +4,40 @@ Neither the server package nor the client installers contain a model. They are
 several gigabytes, they carry their own licence, and every site mirrors them
 differently. Installing one is a single command.
 
-Everything below downloads a **CTranslate2 conversion**, which is the format
-`faster-whisper` loads directly. The plain `openai/whisper-*` repositories are
-PyTorch checkpoints and will not work.
+The same Whisper weights come in different formats, and which one you want
+depends on how the server will decode. Most of this page is about the
+**CTranslate2** conversions, which is what `faster-whisper` loads and what every
+platform can run. On an Apple Silicon Mac there is a second option, **MLX**,
+which is the only route to the GPU. Neither backend reads the other's files.
+
+Whichever you pick, it is a local directory. The plain `openai/whisper-*`
+repositories are PyTorch checkpoints and will not work with either.
 
 ## Which model
 
-| |`large-v3`|`large-v3-turbo`|
+Four things are downloadable, and a normal install needs one or two of them.
+
+| | What it is | Size | Setting |
+| --- | --- | --- | --- |
+| `large-v3-turbo` | The accurate model. What the shipped configs name. | 1.5 GiB | `model.path` |
+| `large-v3` | More accurate, several times slower. | 2.9 GiB | `model.path` |
+| `base` | Draft model — live partial text only, never committed. | 140 MiB | `model.draft_path` |
+| `large-v3-turbo-mlx` | `large-v3-turbo` again, for the Apple Silicon GPU. | 1.5 GiB | `model.path`, with `--backend mlx` |
+
+**Start here:**
+
+- **On Linux or Windows** — `large-v3-turbo`, then `base` alongside it. That
+  second one is small and it is the difference between text appearing in five
+  seconds and in one.
+- **On an Apple Silicon Mac** — `large-v3-turbo-mlx` on its own. The GPU is fast
+  enough that no draft model is needed.
+
+Every download also fetches `silero_vad.onnx` (2.2 MiB), which is how the server
+decides an utterance has ended.
+
+### `large-v3` against `large-v3-turbo`
+
+| | `large-v3` | `large-v3-turbo` |
 |---|---|---|
 | Download | 2.9 GiB | 1.5 GiB |
 | Resident (INT8) | ~2 GB | ~1.2 GB |
@@ -19,12 +46,12 @@ PyTorch checkpoints and will not work.
 | Accuracy | highest | slightly lower |
 
 `large-v3` is what the project plan specifies. **The shipped configs point at
-`large-v3-turbo` anyway** — the plan's largest technical
-risk is exactly that `large-v3` cannot hold the first-partial latency budget on
-CPU, and turbo is the mitigation that does not require new hardware. Turbo cuts
-the decoder from 32 layers to 4, so it loses some accuracy; how much depends on
-the language and the audio, and OpenAI has noted the loss is uneven across
-languages. Measure both on your own recordings before choosing:
+`large-v3-turbo` anyway** — the plan's largest technical risk is exactly that
+`large-v3` cannot hold the first-partial latency budget on CPU, and turbo is the
+mitigation that does not require new hardware. Turbo cuts the decoder from 32
+layers to 4, so it loses some accuracy; how much depends on the language and the
+audio, and OpenAI has noted the loss is uneven across languages. Measure both on
+your own recordings before choosing:
 
 ```bash
 local-dictation-server health all      # first_partial_p95 and rtf_p95 live here
@@ -33,20 +60,7 @@ local-dictation-server health all      # first_partial_p95 and rtf_p95 live here
 Keep the real-time factor (`rtf_p95`) under 1.0. Above it, the decoder is falling
 behind the microphone and no amount of tuning elsewhere will fix the latency.
 
-### On a Mac: `large-v3-turbo-mlx`
-
-The same weights again, converted for MLX, which is the only way to the GPU on
-Apple Silicon — CTranslate2 has no Metal backend, so no value of `model.device`
-gets you there. About seven times the decode speed, and it makes the draft model
-below unnecessary. Fetch it with `./fetch-model.sh large-v3-turbo-mlx`, point
-`model.path` at it, and start the server with `--backend mlx`. See
-[Choosing a backend](server-usage.md#choosing-a-backend).
-
-The two conversions are not interchangeable: `model.bin` is the CTranslate2 one
-and `weights.safetensors` the MLX one, and each backend refuses the other's
-directory at startup rather than part-way through a decode.
-
-### And one more: `base`, the draft model
+### `base`, the draft model
 
 140 MB, and on CPU it is worth more than the choice above.
 
@@ -68,9 +82,37 @@ Measured on a MacBook Air M5, Korean, five clips:
 | `large-v3-turbo` alone | 4.85 s | 7.47 s | 5.3% |
 | with `base` as the draft | **0.92 s** | **4.58 s** | 5.3% |
 
-Identical accuracy, first partial five times sooner. Get it with
-`./fetch-model.sh base`, and see `model.draft_path` in
-[server-usage.md](server-usage.md#every-setting).
+Identical accuracy, first partial five times sooner.
+
+### `large-v3-turbo-mlx`, on an Apple Silicon Mac
+
+The same weights again, converted for MLX. This is the only way to reach the GPU
+on Apple Silicon: CTranslate2 has no Metal backend, so no value of
+`model.device` gets you there.
+
+| | first partial p50 | finalization p50 | CER |
+|---|---|---|---|
+| `large-v3-turbo` + `base` draft, CPU | 0.92 s | 4.58 s | 5.3% |
+| **`large-v3-turbo-mlx`, no draft** | **1.29 s** | **1.12 s** | 5.3% |
+
+Same accuracy again — same model. It is the only configuration that meets both
+latency targets, and it needs one model rather than two to do it. It also runs at
+a real-time factor of 0.12 instead of 0.77, which matters on a fanless machine
+where sustained load is what makes it throttle.
+
+It needs its own backend, and one extra package:
+
+```bash
+"$PREFIX/venv/bin/python" -m pip install mlx-whisper
+```
+
+Then point `model.path` at the MLX directory, clear `model.draft_path`, and
+start the server with `LD_BACKEND=mlx`. See
+[Choosing a backend](server-usage.md#choosing-a-backend).
+
+The two conversions are not interchangeable: `model.bin` is the CTranslate2 one
+and `weights.safetensors` the MLX one. Each backend refuses the other's
+directory at startup, and `check` catches it before a restart.
 
 ## Linux and macOS
 
@@ -86,25 +128,32 @@ cd "$PREFIX/app"   # or the server/ directory of your checkout
 ./scripts/fetch-model.sh --list
 ```
 
-Then pick one:
+Then, on Linux or an Intel Mac — the accurate model and the draft one:
 
 ```bash
 ./scripts/fetch-model.sh large-v3-turbo --dest "$PREFIX/models"
 ```
 
 ```bash
-./scripts/fetch-model.sh large-v3 --dest "$PREFIX/models"
+./scripts/fetch-model.sh base --dest "$PREFIX/models"
 ```
 
-Both commands also fetch `silero_vad.onnx` (2.2 MiB), which the server uses to
-decide when an utterance has ended. To install both models at once:
+Or on an Apple Silicon Mac, one command instead of those two:
+
+```bash
+./scripts/fetch-model.sh large-v3-turbo-mlx --dest "$PREFIX/models"
+```
+
+Every one of them also fetches `silero_vad.onnx`. `all` fetches the three
+CTranslate2 models and the VAD — not the MLX one, which would be 1.5 GB that a
+Linux server can never load:
 
 ```bash
 ./scripts/fetch-model.sh all --dest "$PREFIX/models"
 ```
 
 The configs already name `$PREFIX/models/large-v3-turbo`, so fetching that one
-needs no further edit.
+needs no further edit. The other three are settings you add.
 
 ## Windows
 
@@ -116,8 +165,12 @@ installed `server\scripts` directory:
 ```
 
 ```powershell
-.\fetch-model.ps1 -Model large-v3 -Dest D:\models
+.\fetch-model.ps1 -Model base
 ```
+
+The second one is the draft model, and on a Windows laptop decoding on the CPU
+it is the difference between text appearing in five seconds and in one. There is
+no MLX option here — that is Apple Silicon only.
 
 The default destination is `%LOCALAPPDATA%\LocalDictation\models`, which is where
 the client looks in standalone mode.
@@ -151,17 +204,29 @@ HF_ENDPOINT=https://models.internal ./scripts/fetch-model.sh large-v3
 Both language servers share one model directory — there is no Korean model and
 English model, only a Korean *process* and an English *process*.
 
+On a CPU, with the draft model:
+
 ```yaml
 model:
   path: "<prefix>/models/large-v3-turbo"
-  draft_path: "<prefix>/models/base"      # optional, and the biggest win on CPU
+  draft_path: "<prefix>/models/base"
 streaming:
   silero_model_path: "<prefix>/models/silero_vad.onnx"
 ```
 
-The installer writes the first and last of these for the prefix you chose, so
-those are what to check rather than what to type. `draft_path` starts empty and
-is yours to add. Apply any change to both files and restart:
+On an Apple Silicon GPU, started with `LD_BACKEND=mlx`:
+
+```yaml
+model:
+  path: "<prefix>/models/large-v3-turbo-mlx"
+  draft_path: null
+streaming:
+  silero_model_path: "<prefix>/models/silero_vad.onnx"
+```
+
+The installer writes `model.path` and `silero_model_path` for the prefix you
+chose, so those are what to check rather than what to type. `draft_path` starts
+empty and is yours to add. Apply any change to both files and restart:
 
 ```bash
 local-dictation-server restart all && local-dictation-server health all

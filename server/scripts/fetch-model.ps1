@@ -10,13 +10,14 @@
 .EXAMPLE
   .\fetch-model.ps1                              # large-v3 into the default dir
   .\fetch-model.ps1 -Model large-v3-turbo        # turbo (half the size, much faster)
-  .\fetch-model.ps1 -Model all -Dest D:\models   # both models + the VAD
+  .\fetch-model.ps1 -Model base                  # draft model, for live partials
+  .\fetch-model.ps1 -Model all -Dest D:\models   # every model + the VAD
   .\fetch-model.ps1 -List                        # show sizes, download nothing
   .\fetch-model.ps1 -Verify -Dest D:\models      # re-check an existing install
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('large-v3', 'large-v3-turbo', 'vad', 'all')]
+    [ValidateSet('large-v3', 'large-v3-turbo', 'base', 'vad', 'all')]
     [string]$Model = 'large-v3',
 
     [string]$Dest = "$env:LOCALAPPDATA\LocalDictation\models",
@@ -35,8 +36,15 @@ $ProgressPreference = 'Continue'
 $Repos = @{
     'large-v3'       = 'Systran/faster-whisper-large-v3'
     'large-v3-turbo' = 'deepdml/faster-whisper-large-v3-turbo-ct2'
+    # The draft model: it writes only the live partial text and nothing that is
+    # kept, which on CPU is the single biggest latency change available.
+    'base'           = 'Systran/faster-whisper-base'
 }
-$ModelFiles = @('config.json', 'model.bin', 'preprocessor_config.json', 'tokenizer.json', 'vocabulary.json')
+# Only the fallback for when the API is unreachable. The file set differs
+# between conversions — the large-v3 repos carry vocabulary.json and a
+# preprocessor config, base carries vocabulary.txt and no preprocessor — so the
+# real list is asked for, not assumed.
+$FallbackFiles = @('config.json', 'model.bin', 'preprocessor_config.json', 'tokenizer.json', 'vocabulary.json')
 $SileroUrl = 'https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx'
 $Endpoint = if ($env:HF_ENDPOINT) { $env:HF_ENDPOINT } else { 'https://huggingface.co' }
 
@@ -75,6 +83,19 @@ function Write-Sums([string]$Directory) {
     Write-Host "  wrote $Directory\SHA256SUMS"
 }
 
+# Ask the repository what it actually contains, skipping repository furniture.
+function Get-RepoFiles([string]$Source) {
+    $skip = @('.gitattributes', 'README.md', '.gitignore', 'SHA256SUMS')
+    try {
+        $listing = Invoke-RestMethod -Uri "$Endpoint/api/models/$Source" -TimeoutSec 20
+        $names = @($listing.siblings | ForEach-Object { $_.rfilename } |
+                   Where-Object { $_ -and $skip -notcontains $_ -and $_ -notlike '*/*' })
+        if ($names.Count -gt 0) { return $names }
+    }
+    catch { }
+    $FallbackFiles
+}
+
 function Get-ModelRepo([string]$Name) {
     if ($Repo) { return $Repo }
     if (-not $Repos.ContainsKey($Name)) { throw "unknown model '$Name'" }
@@ -85,7 +106,7 @@ function Save-Model([string]$Name) {
     $source = Get-ModelRepo $Name
     $target = Join-Path $Dest $Name
     Write-Host "$Name  <-  $source"
-    foreach ($file in $ModelFiles) {
+    foreach ($file in (Get-RepoFiles $source)) {
         if ($file -eq 'model.bin' -and $MetadataOnly) { Write-Host '  ~ model.bin (skipped: -MetadataOnly)'; continue }
         Save-File "$Endpoint/$source/resolve/main/$file" (Join-Path $target $file)
     }
@@ -102,7 +123,7 @@ function Show-Sizes() {
     foreach ($name in $Repos.Keys | Sort-Object) {
         $source = Get-ModelRepo $name
         Write-Host ('{0,-16} {1}' -f $name, $source)
-        foreach ($file in $ModelFiles) {
+        foreach ($file in (Get-RepoFiles $source)) {
             $size = Get-RemoteSize "$Endpoint/$source/resolve/main/$file"
             Write-Host ('  {0,-28} {1,10}' -f $file, (Format-Size $size))
             $total += $size
@@ -143,13 +164,24 @@ if ($Verify) { Test-Install; return }
 New-Item -ItemType Directory -Force -Path $Dest | Out-Null
 switch ($Model) {
     'vad' { Save-Vad }
-    'all' { Save-Model 'large-v3'; Save-Model 'large-v3-turbo'; Save-Vad }
+    'all' { Save-Model 'large-v3'; Save-Model 'large-v3-turbo'; Save-Model 'base'; Save-Vad }
     default { Save-Model $Model; Save-Vad }
 }
 
 Write-Host ''
 Write-Host "installed under $Dest"
-if ($Model -ne 'vad') {
+if ($Model -eq 'base') {
+    # base is a draft model. Naming it as model.path would quietly downgrade
+    # every transcript the server commits.
+    Write-Host ''
+    Write-Host 'base is a draft model - it belongs on draft_path, not model.path:'
+    Write-Host "  model.draft_path:               $Dest\base"
+    Write-Host ''
+    Write-Host 'Leave model.path pointing at the accurate model. The draft one only'
+    Write-Host 'writes the partial text you watch appear; what you keep is decoded'
+    Write-Host 'once, at the end, by the model above it.'
+}
+elseif ($Model -ne 'vad') {
     $installed = if ($Model -eq 'all') { 'large-v3' } else { $Model }
     Write-Host ''
     Write-Host 'put these two lines in your server config:'

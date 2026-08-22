@@ -220,7 +220,7 @@ list_sizes() {
   local vad; vad="$(remote_size "$SILERO_URL")"
   printf '%-16s %s\n  %-28s %10s\n' "vad" "silero-vad" "silero_vad.onnx" "$(human "$vad")"
   [[ "$vad" =~ ^[0-9]+$ ]] && total=$((total + vad))
-  printf '\n%-16s %10s  (every model + VAD)\n' "total" "$(human "$total")"
+  printf '\n%-16s %10s  (everything above; `all` fetches every one but the MLX)\n' "total" "$(human "$total")"
 }
 
 while [[ $# -gt 0 ]]; do

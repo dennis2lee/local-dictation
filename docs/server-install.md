@@ -133,9 +133,18 @@ every site mirrors them differently.
 This also fetches `silero_vad.onnx` (2.2 MiB), which decides when an utterance has
 ended. The configs already name both, so nothing needs editing.
 
-`large-v3-turbo` is the right starting point on CPU. `large-v3` is more accurate
-and several times slower — [model-setup.md](model-setup.md) has the comparison,
-offline transfer instructions and checksum verification.
+`large-v3-turbo` is the right starting point on CPU, and there are two more
+worth knowing about before you settle:
+
+- **`base`** (140 MB), fetched the same way. It writes only the live partial
+  text and nothing that is kept, and on CPU it takes first-partial latency from
+  about five seconds to about one. Set it as `model.draft_path`.
+- **`large-v3-turbo-mlx`** on an Apple Silicon Mac, which is the only route to
+  the GPU there — roughly seven times the decode speed, and it makes the draft
+  model unnecessary.
+
+[model-setup.md](model-setup.md) has all four, the measurements behind those
+claims, offline transfer instructions and checksum verification.
 
 ## 3. Check, then start
 

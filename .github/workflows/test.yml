@@ -91,6 +91,21 @@ jobs:
           sudo apt-get install -y -qq \
             libgl1-mesa-dev xorg-dev libasound2-dev \
             libwayland-dev libxkbcommon-dev wayland-protocols
+      - name: PowerShell scripts parse
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # Nothing else ever reads these. build-msi.ps1 at least runs during a
+        # release; fetch-model.ps1 is handed to a user on a Windows machine and
+        # a syntax error in it would surface there and nowhere earlier.
+        run: |
+          $failed = $false
+          Get-ChildItem -Recurse -Filter *.ps1 | ForEach-Object {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errors) | Out-Null
+            if ($errors) { Write-Host "$($_.FullName):"; $errors | ForEach-Object { Write-Host "  $_" }; $failed = $true }
+            else { Write-Host "ok  $($_.Name)" }
+          }
+          if ($failed) { exit 1 }
       - name: Vet
         working-directory: client
         run: go vet ./...
