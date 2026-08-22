@@ -198,10 +198,22 @@ concurrent sessions on the machine, which is usually not what someone means.
 
 ### Choosing a backend
 
-Which engine decodes the audio is a command-line choice, not a config one:
+Which engine decodes the audio is a launch choice, not a config key:
 `--backend`, or `LD_BACKEND` for the management script. It is not in the YAML
 because the right answer depends on the machine, and the same config file gets
 copied between them.
+
+Set it durably in **`<prefix>/config/environment`**, which the installed
+command sources before every operation and which an upgrade never overwrites:
+
+```bash
+echo LD_BACKEND=mlx >> ~/local-dictation/config/environment
+```
+
+That file is the only durable home the choice has, and it matters more than it
+sounds: a `model.path` holding MLX weights will not start under the default
+backend, so a restart from a shell that happened not to export `LD_BACKEND`
+would fail with a model it cannot read.
 
 | | `whisper` (default) | `mlx` |
 | --- | --- | --- |

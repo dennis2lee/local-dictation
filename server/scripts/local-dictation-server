@@ -24,7 +24,10 @@
 #   LD_PYTHON      interpreter                  (default: $LD_HOME/venv/bin/python)
 #   LD_RUN_DIR     PID files                    (default: $LD_HOME/run)
 #   LD_LOG_DIR     log files                    (default: $LD_HOME/log)
-#   LD_BACKEND     inference backend            (default: whisper; "mlx" uses an
+#   LD_BACKEND     inference backend            (set it durably in
+#                  <prefix>/config/environment, which the installed command
+#                  sources and an upgrade never overwrites)
+#                                              (default: whisper; "mlx" uses an
 #                  Apple Silicon GPU and wants an MLX conversion of the model
 #                  in model.path — see docs/server-usage.md; "fake" loads
 #                  no model and emits scripted text — for plumbing checks only)

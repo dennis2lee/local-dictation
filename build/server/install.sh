@@ -164,6 +164,20 @@ for language in ko en; do
   fi
 done
 
+if [[ ! -f "$PREFIX/config/environment" ]]; then
+  cat > "$PREFIX/config/environment" <<'ENVIRONMENT'
+# Sourced by bin-local-dictation-server before every command. An upgrade never
+# overwrites this file. Only the settings that are not config keys belong here.
+#
+# LD_BACKEND      which engine decodes: whisper (default, CPU everywhere),
+#                 mlx (Apple Silicon GPU — needs an MLX conversion in
+#                 model.path and `pip install mlx-whisper`), or fake.
+# LD_START_TIMEOUT  seconds `start` watches a new process before handing back.
+#
+# LD_BACKEND=mlx
+ENVIRONMENT
+fi
+
 info "creating the virtual environment"
 "$PYTHON" -m venv "$PREFIX/venv"
 "$PREFIX/venv/bin/python" -m pip install --quiet --upgrade pip
@@ -215,10 +229,22 @@ cat > "$PREFIX/bin-local-dictation-server" <<WRAPPER
 # shell redirect every install on the machine, and the failure that produced
 # named the symptom rather than the cause.
 #
-# LD_BACKEND and LD_START_TIMEOUT are not paths and still come from the
-# environment. To drive a different tree entirely, run
-# app/scripts/local-dictation-server directly — it takes all of these from the
-# environment, which is how a checkout is served.
+# LD_BACKEND and LD_START_TIMEOUT are not paths. They come from
+# config/environment when that file exists, and from the environment otherwise
+# — which is the only durable home a backend choice has, since it is a launch
+# flag rather than a config key and a server whose model.path holds MLX weights
+# will not start under the default one. config/ is never overwritten by an
+# upgrade, so a choice made there survives one.
+#
+# To drive a different tree entirely, run app/scripts/local-dictation-server
+# directly — it takes all of these from the environment, which is how a
+# checkout is served.
+if [[ -f "$PREFIX/config/environment" ]]; then
+  set -a
+  . "$PREFIX/config/environment"
+  set +a
+fi
+
 __ld_pin() {
   local name="\$1" want="\$2"
   if [[ -n "\${!name:-}" && "\${!name}" != "\$want" ]]; then
