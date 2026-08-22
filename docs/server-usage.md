@@ -88,7 +88,7 @@ directly. That is the unwrapped script, and it reads every variable below.
 | `LD_PYTHON` | `$LD_HOME/venv/bin/python` | The interpreter |
 | `LD_RUN_DIR` | `$LD_HOME/run` | PID files; must be writable by you |
 | `LD_LOG_DIR` | `$LD_HOME/log` | Log files; must be writable by you |
-| `LD_BACKEND` | `whisper` | `fake` starts without a model, for plumbing checks |
+| `LD_BACKEND` | `whisper` | `mlx` for an Apple Silicon GPU, `fake` starts without a model, for plumbing checks |
 | `LD_START_TIMEOUT` | `15` | Seconds `start` watches for an early exit; `0` not to wait |
 | `LD_RELEASE_REPO` | `dennis2lee/local-dictation` | Where `update` with no argument looks for a release |
 
@@ -196,6 +196,42 @@ rejected at startup.
 The two language servers count separately: `max_sessions: 2` in each is four
 concurrent sessions on the machine, which is usually not what someone means.
 
+### Choosing a backend
+
+Which engine decodes the audio is a command-line choice, not a config one:
+`--backend`, or `LD_BACKEND` for the management script. It is not in the YAML
+because the right answer depends on the machine, and the same config file gets
+copied between them.
+
+| | `whisper` (default) | `mlx` |
+| --- | --- | --- |
+| Runs on | any CPU, and NVIDIA GPUs | Apple Silicon GPU |
+| Engine | faster-whisper / CTranslate2 | MLX |
+| Model format | `model.bin` | `weights.safetensors` |
+| Install | `pip install -e '.[inference]'` | `pip install -e '.[mlx]'` |
+| Fetch the model | `fetch-model.sh large-v3-turbo` | `fetch-model.sh large-v3-turbo-mlx` |
+
+The two conversions are not interchangeable, and each backend says so rather
+than failing inside the first decode. `check` catches it before a restart.
+
+**On a Mac, `mlx` is worth reaching for.** Measured on a MacBook Air M5, Korean,
+five clips through the real WebSocket protocol:
+
+| | first partial p50 | finalization p50 | CER |
+| --- | --- | --- | --- |
+| `whisper`, CPU | 4.85 s | 7.47 s | 5.3% |
+| `whisper`, CPU, with a `base` draft model | 0.92 s | 4.58 s | 5.3% |
+| **`mlx`, no draft model** | **1.29 s** | **1.12 s** | **5.3%** |
+
+The same accuracy in every row — it is the same model. The last one is the only
+configuration that meets both latency targets, and it needs no draft model to
+do it: on the GPU the accurate model is already fast enough to write the
+partial text itself. Real-time factor goes from 0.77 to 0.12, which also
+matters on a fanless machine, where sustained load is what makes it throttle.
+
+`mlx` is macOS-and-arm64 only and its dependency is marked as such, so nothing
+about a Linux or Windows install changes by its existence.
+
 ### The handful worth understanding first
 
 Ten of the thirty-four, and the ones a real deployment usually touches. The
@@ -234,12 +270,14 @@ the prefix it installed to.
 
 #### `model`
 
-Everything here is handed to faster-whisper unchanged.
+Handed to the inference backend. `device`, `compute_type`, `cpu_threads` and
+`num_workers` are CTranslate2 settings that the `mlx` backend ignores — see
+[Choosing a backend](#choosing-a-backend).
 
 | Key | Default | Accepts | What it does |
 | --- | --- | --- | --- |
 | `path` | `<prefix>/models/large-v3-turbo` | a directory holding `model.bin` | A CTranslate2 conversion, never a HuggingFace repo id: the server makes no outbound requests. `check` opens it. |
-| `device` | `cpu` | `cpu`, `cuda`, `auto` | `cuda` needs a CTranslate2 built with CUDA and an NVIDIA GPU. **On Apple Silicon there is no GPU option here at all**: CTranslate2 has no Metal backend, so `cuda` raises and `auto` resolves to `cpu`. Reaching an Apple GPU would mean a different inference backend, not a different value here. |
+| `device` | `cpu` | `cpu`, `cuda`, `auto` | Read by the `whisper` backend only. `cuda` needs a CTranslate2 built with CUDA and an NVIDIA GPU; **on Apple Silicon no value here reaches the GPU**, because CTranslate2 has no Metal backend. That is what [`--backend mlx`](#choosing-a-backend) is for. |
 | `compute_type` | `int8` | on CPU: `int8`, `int8_float32`, `float32` | Ask your own build rather than guessing: `python -c "import ctranslate2; print(ctranslate2.get_supported_compute_types('cpu'))"`. `int8` is what the latency budget assumes. |
 | `language` | `ko` | `ko`, `en` | There is no auto-detection. Each server transcribes one language, which is what makes a swapped port a detectable mistake rather than fluent nonsense. |
 | `beam_size` | `1` | ≥ 1 | `1` is greedy. Beam search roughly doubles wall-clock for an accuracy gain dictation — where the text is appearing as you watch — does not benefit from. |

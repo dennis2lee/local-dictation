@@ -269,6 +269,19 @@ $PREFIX/tls and fill in the security section of both configs; to keep it to this
 machine, reinstall with --loopback. Both are in docs/server-usage.md."
 fi
 
+APPLE_GPU=""
+if [[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]]; then
+  APPLE_GPU="
+This is an Apple Silicon Mac, where the CPU decoder sits close to real time and
+the GPU is around seven times faster. To use it:
+
+     $PREFIX/venv/bin/python -m pip install mlx-whisper
+     $PREFIX/app/scripts/fetch-model.sh large-v3-turbo-mlx --dest $PREFIX/models
+
+  then point model.path at that directory, clear model.draft_path, and run the
+  server with LD_BACKEND=mlx. The measurements are in docs/server-usage.md."
+fi
+
 cat <<NEXT
 
 Installed under $PREFIX.
@@ -290,6 +303,7 @@ Next:
   To change a setting:
 
        $EDIT_PREFIX\$EDITOR $PREFIX/config/server-ko.yaml
+$APPLE_GPU
 
 $POSTURE
 

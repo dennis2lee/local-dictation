@@ -33,6 +33,19 @@ local-dictation-server health all      # first_partial_p95 and rtf_p95 live here
 Keep the real-time factor (`rtf_p95`) under 1.0. Above it, the decoder is falling
 behind the microphone and no amount of tuning elsewhere will fix the latency.
 
+### On a Mac: `large-v3-turbo-mlx`
+
+The same weights again, converted for MLX, which is the only way to the GPU on
+Apple Silicon — CTranslate2 has no Metal backend, so no value of `model.device`
+gets you there. About seven times the decode speed, and it makes the draft model
+below unnecessary. Fetch it with `./fetch-model.sh large-v3-turbo-mlx`, point
+`model.path` at it, and start the server with `--backend mlx`. See
+[Choosing a backend](server-usage.md#choosing-a-backend).
+
+The two conversions are not interchangeable: `model.bin` is the CTranslate2 one
+and `weights.safetensors` the MLX one, and each backend refuses the other's
+directory at startup rather than part-way through a decode.
+
 ### And one more: `base`, the draft model
 
 140 MB, and on CPU it is worth more than the choice above.
@@ -177,6 +190,7 @@ A file that fails here is corrupt or truncated; re-run the download with
 Whisper weights are released by OpenAI under the MIT licence. The CTranslate2
 conversions used here are redistributions of those weights: `large-v3` from
 `Systran/faster-whisper-large-v3`, `large-v3-turbo` from
-`deepdml/faster-whisper-large-v3-turbo-ct2`, and `base` from
-`Systran/faster-whisper-base`. Silero VAD is MIT licensed. Check
+`deepdml/faster-whisper-large-v3-turbo-ct2`, `base` from
+`Systran/faster-whisper-base`, and the MLX conversion from
+`mlx-community/whisper-large-v3-turbo`. Silero VAD is MIT licensed. Check
 each repository's card before redistributing anything internally.

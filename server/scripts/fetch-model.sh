@@ -5,6 +5,7 @@
 #   ./fetch-model.sh                        # large-v3      into the default dir
 #   ./fetch-model.sh large-v3-turbo         # turbo         into the default dir
 #   ./fetch-model.sh base                   # draft model, for live partials
+#   ./fetch-model.sh large-v3-turbo-mlx     # for --backend mlx (Apple Silicon)
 #   ./fetch-model.sh all --dest ./models    # all three + VAD, into ./models
 #   ./fetch-model.sh --list                 # show sizes, download nothing
 #   ./fetch-model.sh --verify --dest ./models
@@ -46,6 +47,12 @@ REPO_LARGE_V3_TURBO="deepdml/faster-whisper-large-v3-turbo-ct2"
 # utterance once at the end. 140 MB against 1.5 GB, and the single largest
 # latency change this server has. See model.draft_path in docs/server-usage.md.
 REPO_BASE="Systran/faster-whisper-base"
+# A different conversion of the same weights, for --backend mlx. CTranslate2
+# has no Metal backend, so on an Apple Silicon Mac this is the only way to the
+# GPU — worth roughly seven times the decode speed. It holds config.json and
+# weights.safetensors rather than model.bin, and the two formats are not
+# interchangeable: each backend refuses the other's directory at startup.
+REPO_LARGE_V3_TURBO_MLX="mlx-community/whisper-large-v3-turbo"
 SILERO_URL="https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
 
 # The file set differs between conversions: the large-v3 repos carry
@@ -113,7 +120,8 @@ repo_for() {
     large-v3)       printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3}" ;;
     large-v3-turbo) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO}" ;;
     base)           printf '%s' "${REPO_OVERRIDE:-$REPO_BASE}" ;;
-    *) die "unknown model '$1' (expected: large-v3, large-v3-turbo, base, vad or all)" ;;
+    large-v3-turbo-mlx) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO_MLX}" ;;
+    *) die "unknown model '$1' (expected: large-v3, large-v3-turbo, base, large-v3-turbo-mlx, vad or all)" ;;
   esac
 }
 
@@ -198,7 +206,7 @@ verify() {
 
 list_sizes() {
   local total=0
-  for model in large-v3 large-v3-turbo base; do
+  for model in large-v3 large-v3-turbo base large-v3-turbo-mlx; do
     local repo; repo="$(repo_for "$model")"
     printf '%-16s %s\n' "$model" "$repo"
     local files=()
@@ -217,7 +225,7 @@ list_sizes() {
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    large-v3|large-v3-turbo|base|vad|all) MODEL="$1" ;;
+    large-v3|large-v3-turbo|base|large-v3-turbo-mlx|vad|all) MODEL="$1" ;;
     --dest)          DEST="${2:?--dest needs a directory}"; shift ;;
     --repo)          REPO_OVERRIDE="${2:?--repo needs an id}"; shift ;;
     --metadata-only) METADATA_ONLY=1 ;;
@@ -247,7 +255,16 @@ info "installed under $DEST"
 # base is a draft model: it produces the live partial text and nothing that is
 # kept, so it belongs on draft_path. Naming it as model.path would quietly
 # downgrade every transcript the server commits.
-if [[ "$MODEL" == "base" ]]; then
+if [[ "$MODEL" == "large-v3-turbo-mlx" ]]; then
+  info ""
+  info "an MLX conversion, for the Apple Silicon GPU:"
+  info "  model.path:                     $DEST/${MODEL}"
+  info "  streaming.silero_model_path:    $DEST/silero_vad.onnx"
+  info ""
+  info "Start the server with --backend mlx (or LD_BACKEND=mlx), and clear"
+  info "model.draft_path — on the GPU the accurate model is already fast"
+  info "enough that a draft one buys nothing."
+elif [[ "$MODEL" == "base" ]]; then
   info ""
   info "base is a draft model — it belongs on draft_path, not model.path:"
   info "  model.draft_path:               $DEST/base"

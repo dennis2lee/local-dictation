@@ -88,16 +88,28 @@ def preflight(settings: Settings, *, backend: str) -> tuple[list[str], list[str]
     warnings: list[str] = []
 
     if backend != "fake":
+        # Each backend eats a different conversion of the same model, and
+        # handing one the other's directory is a mistake worth catching here
+        # rather than three seconds into the first utterance.
+        if backend == "mlx":
+            from app.inference.mlx import WEIGHTS as accepted
+        else:
+            accepted = ("model.bin",)
+        wanted = " or ".join(accepted)
+
+        def holds_weights(directory: Path) -> bool:
+            return any((directory / name).is_file() for name in accepted)
+
         model = Path(settings.model.path)
         if not model.is_dir():
             problems.append(f"model.path is not a directory: {model}")
-        elif not (model / "model.bin").is_file():
-            problems.append(f"model.path holds no model.bin: {model}")
+        elif not holds_weights(model):
+            problems.append(f"model.path holds no {wanted}: {model}")
 
         if settings.model.draft_path:
             draft = Path(settings.model.draft_path)
-            if not (draft / "model.bin").is_file():
-                problems.append(f"model.draft_path holds no model.bin: {draft}")
+            if not holds_weights(draft):
+                problems.append(f"model.draft_path holds no {wanted}: {draft}")
 
     for label, path in (
         ("security.tls_certificate", settings.security.tls_certificate),
@@ -131,9 +143,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--language", choices=["ko", "en"], help="override model.language")
     parser.add_argument(
         "--backend",
-        choices=["whisper", "fake"],
+        choices=["whisper", "fake", "mlx"],
         default="whisper",
-        help="inference backend; 'fake' emits scripted text and loads no model",
+        help="inference backend: 'whisper' runs on the CPU everywhere, 'mlx' on "
+        "an Apple Silicon GPU, 'fake' emits scripted text and loads no model",
     )
     parser.add_argument(
         "--check",

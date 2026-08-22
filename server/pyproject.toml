@@ -18,6 +18,12 @@ inference = [
     "faster-whisper>=1.0.3",
     "ctranslate2>=4.3",
 ]
+# The Apple Silicon GPU path. Marked rather than merely optional: mlx wheels
+# exist only for arm64 macOS, so an unmarked entry would fail the install on
+# every other platform this server runs on.
+mlx = [
+    "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 # Silero VAD through onnxruntime. Without it the server falls back to the
 # energy-based detector in app/streaming/vad.py.
 vad = [
