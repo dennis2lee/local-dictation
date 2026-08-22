@@ -39,12 +39,39 @@ func sectionHeading(text string) *widget.Label {
 }
 
 // caption is the muted explanatory line under a control.
+//
+// It wraps, because it is a paragraph and it is given the whole width of the
+// section to fill. Beside a control it is the wrong helper: see inlineCaption.
 func caption(text string) *widget.Label {
 	label := widget.NewLabel(text)
 	label.SizeName = theme.SizeNameCaptionText
 	label.Importance = widget.LowImportance
 	label.Wrapping = fyne.TextWrapWord
 	return label
+}
+
+// inlineCaption is the same muted style as a label sitting beside a control
+// rather than under one — the word at the left of a slider's row.
+//
+// The difference that matters is the wrapping. A wrapping label reports a
+// minimum width of about one character, because it expects its container to
+// hand it a width and it will fold the text to fit. In a VBox that is exactly
+// right. In a Border row it is a trap: the layout believes the label needs
+// 16px, gives the rest to the control, and the text then draws its real width
+// straight over the top of it. "Input level" did precisely that to the gain
+// slider — 70px of text in a 16px slot, laid over a control starting at 24px.
+func inlineCaption(text string) *widget.Label {
+	label := widget.NewLabel(text)
+	label.SizeName = theme.SizeNameCaptionText
+	label.Importance = widget.LowImportance
+	label.Wrapping = fyne.TextWrapOff
+	return label
+}
+
+// fixedWidth reserves a width for an object whose text changes, so the control
+// beside it keeps its size as the reading grows and shrinks.
+func fixedWidth(object fyne.CanvasObject, width float32) fyne.CanvasObject {
+	return container.NewGridWrap(fyne.NewSize(width, object.MinSize().Height), object)
 }
 
 // headline is the status line itself: the largest text in the window, because

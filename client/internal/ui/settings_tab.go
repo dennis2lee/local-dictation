@@ -297,7 +297,7 @@ func (s *settingsTab) buildMicrophoneSection(settings config.Config) fyne.Canvas
 		sectionHeading("Microphone"),
 		s.microphone,
 		container.NewBorder(nil, nil, nil, s.testButton, s.levelBar.Object()),
-		container.NewBorder(nil, nil, caption("Input level"), s.gainLabel, s.gain),
+		container.NewBorder(nil, nil, inlineCaption("Input level"), fixedWidth(s.gainLabel, widestGainLabel()), s.gain),
 		caption("Raise this if the meter barely moves when you speak normally. "+
 			"Aim for the green segments with the odd amber peak; anything reaching "+
 			"red is clipping, which the decoder hears as distortion."),
@@ -433,10 +433,34 @@ func (s *settingsTab) shortcutFromForm() config.Hotkey {
 	return config.Hotkey{Modifiers: modifiers, Key: s.shortcutKey.Selected}
 }
 
+// widestGainLabel is how much room to reserve for the reading beside the
+// slider.
+//
+// Without a reservation the label is as wide as its text, so "+18 dB" makes it
+// 11px wider than "-6 dB" and the slider gives up that width as it is dragged
+// louder — the thumb slides out from under the pointer holding it. Measured
+// rather than hardcoded, since the width is the theme's font at the user's
+// display scale, neither of which this file knows.
+func widestGainLabel() float32 {
+	widest := float32(0)
+	for _, multiplier := range []float64{audio.MinGain, audio.MaxGain} {
+		sample := widget.NewLabel(gainText(multiplier))
+		if width := sample.MinSize().Width; width > widest {
+			widest = width
+		}
+	}
+	return widest
+}
+
+// gainText renders the multiplier the way the label shows it.
+func gainText(multiplier float64) string {
+	return fmt.Sprintf("%+.0f dB", 20*math.Log10(multiplier))
+}
+
 // showGain writes the multiplier as decibels, which is the unit anyone who has
 // touched an audio control before already reads.
 func (s *settingsTab) showGain(multiplier float64) {
-	s.gainLabel.SetText(fmt.Sprintf("%+.0f dB", 20*math.Log10(multiplier)))
+	s.gainLabel.SetText(gainText(multiplier))
 }
 
 // -- update ----------------------------------------------------------------
