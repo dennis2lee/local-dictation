@@ -5,6 +5,7 @@
 #   ./install.sh                           # into ~/local-dictation, no sudo
 #   sudo ./install.sh                      # into /opt/local-dictation
 #   ./install.sh --prefix /srv/dictation   # anywhere you can write
+#   ./install.sh --loopback                # reachable only from this machine
 #
 # Running it without sudo is the normal case and needs no privileges at all: the
 # prefix, the config paths inside it and the command on PATH all move together.
@@ -24,6 +25,7 @@ PREFIX=""
 PYTHON=""
 LINK_DIR=""
 USER_MODE=0
+LOOPBACK=0
 
 die()  { printf 'error: %s\n' "$*" >&2; exit 1; }
 info() { printf '==> %s\n' "$*"; }
@@ -43,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --python)  PYTHON="${2:?}"; shift ;;
     --link)    LINK_DIR="${2:?}"; shift ;;
     --user)    USER_MODE=1 ;;
+    --loopback) LOOPBACK=1 ;;
     -h|--help) usage ;;
     *) die "unexpected argument: $1" ;;
   esac
@@ -136,15 +139,17 @@ cp "$HERE/pyproject.toml" "$PREFIX/app/"
 [[ -d "$HERE/docs" ]] && cp -R "$HERE/docs" "$PREFIX/"
 [[ -f "$HERE/VERSION" ]] && cp "$HERE/VERSION" "$PREFIX/"
 
-# The shipped configs name /opt/local-dictation in five places: the model, the
-# VAD model and three TLS files. Copying them verbatim into another prefix is
-# what made --prefix look supported while producing a server that could not find
-# its own model, so the paths move with the install.
+# Copying the shipped configs verbatim into another prefix is what made
+# --prefix look supported while producing a server that could not find its own
+# model, so every /opt/local-dictation in them becomes the real installation
+# path in five places: the model, the VAD model and the run-time directories.
 #
-# A prefix you own also gets the posture that goes with it — loopback, no TLS.
-# The 0.0.0.0-with-certificates default belongs to a shared server, and a
-# listener open to the network with TLS switched off is the one combination
-# nobody should arrive at by accident.
+# The posture itself now ships in the config rather than being installed on top
+# of it. The shipped files listen on 0.0.0.0 with TLS off, which is the
+# deployment this exists for — one machine holding the model, laptops dictating
+# into it — and rewriting them to loopback here meant every such install began
+# with the same hand edit to two files. --loopback is the other choice, and the
+# summary at the end says which one you got.
 for language in ko en; do
   target="$PREFIX/config/server-$language.yaml"
   # Never overwrite a config an operator has edited.
@@ -153,14 +158,8 @@ for language in ko en; do
     continue
   fi
   sed "s|/opt/local-dictation|$PREFIX|g" "$HERE/config/server-$language.yaml" > "$target"
-  if [[ "$USER_MODE" == "1" ]]; then
-    sed -i.bak \
-      -e 's|^  host: "0.0.0.0"|  host: "127.0.0.1"|' \
-      -e 's|^  tls_certificate: .*|  tls_certificate: null|' \
-      -e 's|^  tls_private_key: .*|  tls_private_key: null|' \
-      -e 's|^  client_ca: .*|  client_ca: null|' \
-      -e 's|^  require_client_certificate: true|  require_client_certificate: false|' \
-      "$target"
+  if [[ "$LOOPBACK" == "1" ]]; then
+    sed -i.bak 's|^  host: "0.0.0.0"|  host: "127.0.0.1"|' "$target"
     rm -f "$target.bak"
   fi
 done
@@ -255,16 +254,19 @@ else
   info "could not link into $LINK_DIR; use the full path below"
 fi
 
-if [[ "$USER_MODE" == "1" ]]; then
-  EDIT_PREFIX=""
-  POSTURE="The configs are set to 127.0.0.1 with TLS off, which is the posture for
-a prefix you own. To serve other machines, set server.host to 0.0.0.0 and put
-certificates in $PREFIX/tls — see docs/server-usage.md."
+if [[ "$USER_MODE" == "1" ]]; then EDIT_PREFIX=""; else EDIT_PREFIX="sudo "; fi
+
+if [[ "$LOOPBACK" == "1" ]]; then
+  POSTURE="The configs are set to 127.0.0.1, so only this machine can reach the
+server. Another machine gets in through an SSH tunnel, or by setting
+server.host to 0.0.0.0 in both configs — read the security section of
+docs/server-usage.md before the second one."
 else
-  EDIT_PREFIX="sudo "
-  POSTURE="TLS is on and expects certificates under $PREFIX/tls. For a first run
-on a trusted network, set security.tls_certificate and tls_private_key to null
-in both configs and turn off require_client_certificate."
+  POSTURE="The configs listen on 0.0.0.0 with TLS off. Anything that can reach
+port 8765 or 8766 can use this server, and nothing on those ports is encrypted,
+so this belongs on a network you trust. To close it, put your CA's files in
+$PREFIX/tls and fill in the security section of both configs; to keep it to this
+machine, reinstall with --loopback. Both are in docs/server-usage.md."
 fi
 
 cat <<NEXT

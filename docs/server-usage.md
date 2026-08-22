@@ -207,7 +207,7 @@ concurrent sessions on the machine, which is usually not what someone means.
 | `streaming.silence_ms` | Trailing silence that ends a sentence. Raise it in a noisy room. |
 | `streaming.max_window_seconds` | Caps how much audio one pass covers, so cost stays flat during a long monologue. |
 | `server.port` | The port that language serves on. The two must differ; see above. |
-| `server.host` | `127.0.0.1` serves only this machine, `0.0.0.0` every interface. Pair the second with TLS. |
+| `server.host` | `0.0.0.0` (the shipped value) serves every interface, `127.0.0.1` only this machine. See [Security](#security). |
 | `limits.max_sessions` | A hard gate. Over it, the server returns `server_busy` immediately rather than queueing behind a decoder that cannot catch up. |
 | `logging.store_audio` / `store_transcript` | Both `false`, and they should stay that way. See below. |
 
@@ -255,24 +255,41 @@ the server logs a warning at startup when it happens.
 
 ## Security
 
-The installer writes the posture that matches where it installed: a prefix you
-own gets `127.0.0.1` with TLS off, a `sudo` install into `/opt` gets `0.0.0.0`
-with TLS on and client certificates required. Neither is a default you should
-leave unexamined once other machines depend on it.
+**Every install ships open and unencrypted:** `0.0.0.0`, TLS off, no client
+certificates. Anything that can reach port 8765 or 8766 can use the server, and
+nothing on those ports is encrypted. That is deliberate — the deployment this
+exists for is one machine holding the model and laptops dictating into it, and
+the loopback default it replaced meant every such install began with the same
+hand edit to two files — but it belongs on a network you trust and nowhere else.
 
-For a server people connect to:
+What crosses the wire is your voice and the text it became, which is usually the
+most sensitive writing anyone does. Two ways to protect it:
 
-- **TLS** with your internal CA, and `require_client_certificate: true` so only
-  managed machines can connect. Both are all-or-nothing — a half-configured
-  listener is worse than a plain one, because operators assume it is encrypted,
-  so the server refuses to start on a partial TLS config. `check` reads the
-  certificate files, so run it before the restart.
+- **An SSH tunnel**, which needs nothing from this server at all. Install with
+  `--loopback` (or set `server.host` back to `127.0.0.1`), then forward the
+  ports from the client machine:
+
+  ```bash
+  ssh -N -L 8765:127.0.0.1:8765 -L 8766:127.0.0.1:8766 you@server
+  ```
+
+  The client connects to `127.0.0.1` with TLS off. SSH is already doing both
+  jobs, so no certificate is involved. The cost is a session that has to be up
+  while you dictate.
+
+- **TLS** with your own certificate authority, and `require_client_certificate:
+  true`. Worth being plain about why: mutual TLS is the *only* access control
+  this server has. There is no token and no password, so with TLS off there is
+  no authentication of any kind. Both settings are all-or-nothing — a
+  half-configured listener is worse than a plain one, because operators assume
+  it is encrypted — so the server refuses to start on a partial TLS config.
+  `check` reads the certificate files, so run it before the restart.
+
+Two more that hold either way:
+
 - **No egress.** The server never fetches anything. Block outbound traffic and
   nothing breaks.
 - **Two inbound ports** and the health paths. Nothing else needs to be open.
-
-The pairing that should never happen by accident is `0.0.0.0` with TLS off. It
-takes a deliberate edit from either starting point, which is the point.
 
 ## Upgrading
 

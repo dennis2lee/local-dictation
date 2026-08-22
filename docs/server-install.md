@@ -71,19 +71,30 @@ Without `--prefix`, the default depends only on whether you used `sudo`:
 | --- | --- | --- | --- |
 | Prefix | `~/local-dictation` | `/opt/local-dictation` | `DIR` |
 | Command linked into | `~/.local/bin` | `/usr/local/bin` | the same, or `--link DIR` |
-| Listens on | `127.0.0.1` | `0.0.0.0` | `127.0.0.1` unless run as root |
-| TLS | off | on, certificates expected | off unless run as root |
+| Listens on | `0.0.0.0` | `0.0.0.0` | `0.0.0.0` |
+| TLS | off | off | off |
 
 The generated configs point **inside the prefix you chose**, so there are no
 paths to edit before the first start. A root install hands `run/`, `log/` and
 `models/` to the user who invoked `sudo`, so the everyday commands still need no
 privileges.
 
-The columns differ because they are different deployments. A prefix you own is a
-machine talking to itself, so it binds loopback and skips TLS. A `/opt` install is
-a shared server, so it binds every interface and expects certificates. The
-combination nobody should reach by accident — open to the network with TLS off —
-takes a deliberate edit either way.
+**Every install is reachable from the network and none of them is encrypted.**
+That is the deployment this exists for — one machine holding the model, laptops
+dictating into it — and the alternative was every install beginning with the
+same hand edit to two config files. It is still a real trade, and the installer
+says so when it finishes: anything that can reach port 8765 or 8766 can use the
+server, and nothing on those ports is encrypted or authenticated. Put it on a
+network you trust.
+
+Two ways to narrow that, either of which can be done later:
+
+- `./install.sh --loopback` binds `127.0.0.1`, so only that machine can reach
+  the server. Other machines then come in through an SSH tunnel — see
+  [Serving other machines](#serving-other-machines).
+- Turn TLS on with your own certificate authority, which also gives you
+  authentication: `require_client_certificate` is the only access control this
+  server has.
 
 The installer also builds a virtual environment under the prefix and installs the
 server's Python dependencies into it, then **imports them to confirm they are
@@ -137,7 +148,7 @@ VAD model, the certificates — without binding a port. A path that is not there
 a message here rather than a server that exits seconds after being started:
 
 ```
-FAILED: ko on 127.0.0.1:8765 would not serve:
+FAILED: ko on 0.0.0.0:8765 would not serve:
   - model.path is not a directory: /home/you/local-dictation/models/large-v3-turbo
 ```
 
@@ -183,12 +194,26 @@ separately observable.
 
 ## Serving other machines
 
-An install into a prefix you own listens on loopback with TLS off. To let other
-machines connect, edit both configs:
+Every install already listens on `0.0.0.0`, so another machine needs only the
+server's address and the two ports — nothing to edit, nothing to fill in on the
+client beyond the host. Leave TLS off there and leave all three certificate
+fields empty.
+
+**Through an SSH tunnel instead.** If the network is one you would rather not
+open a port on — or you installed with `--loopback` — forward the two ports from
+the client machine and connect to `127.0.0.1`:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 -L 8766:127.0.0.1:8766 you@server
+```
+
+SSH already encrypts and authenticates, so TLS stays off on both ends and no
+certificate is involved. The cost is a session that has to be up while you
+dictate.
+
+**With TLS.** For a server on a network you do not control, edit both configs:
 
 ```yaml
-server:
-  host: "0.0.0.0"
 security:
   tls_certificate: "<prefix>/tls/server.crt"
   tls_private_key: "<prefix>/tls/server.key"

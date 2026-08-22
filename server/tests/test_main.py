@@ -164,3 +164,4 @@ def test_the_shipped_configs_are_valid():
     shipped = Path(__file__).resolve().parent.parent / "config"
     for name in ("server-ko.yaml", "server-en.yaml"):
         assert check_config(shipped / name) == 0
+

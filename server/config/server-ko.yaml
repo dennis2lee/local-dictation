@@ -50,10 +50,19 @@ streaming:
   energy_threshold: 0.006
 
 security:
-  tls_certificate: "/opt/local-dictation/tls/server.crt"
-  tls_private_key: "/opt/local-dictation/tls/server.key"
-  client_ca: "/opt/local-dictation/tls/internal-ca.crt"
-  require_client_certificate: true
+  # Off, so a fresh install serves the laptops on your network without a
+  # certificate authority standing between you and the first sentence. Nothing
+  # on these ports is encrypted and nothing authenticates a caller, which is a
+  # trade that belongs on a network you trust and nowhere else.
+  #
+  # To close it: point these three at your CA's files and set
+  # require_client_certificate to true. It is all-or-nothing on purpose — the
+  # server refuses to start on a half-configured pair rather than listen in a
+  # posture an operator would misread as encrypted. docs/server-usage.md.
+  tls_certificate: null
+  tls_private_key: null
+  client_ca: null
+  require_client_certificate: false
 
 limits:
   # large-v3 on CPU does not degrade gracefully. Beyond this the server returns

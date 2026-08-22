@@ -81,10 +81,23 @@ def test_shipped_configs_are_valid():
 
     assert (ko.language, ko.server.port) == ("ko", 8765)
     assert (en.language, en.server.port) == ("en", 8766)
-    # The plan's whole security posture rests on these two.
+    # The retention guarantee. These two are the plan's, they are not
+    # negotiable, and nothing in the shipped configs may turn them on.
     assert not any((ko.logging.store_audio, ko.logging.store_transcript))
     assert not any((en.logging.store_audio, en.logging.store_transcript))
-    assert ko.security.require_client_certificate and en.security.require_client_certificate
+
+    # The network posture, which is a trade rather than a guarantee: open and
+    # unencrypted, because the deployment this exists for is one machine
+    # holding the model and laptops dictating into it, and the loopback default
+    # this replaced meant every such install began with the same hand edit to
+    # two files. The install and both server docs say it out loud. Tighten it
+    # here, deliberately, if that ever stops being the right call.
+    for settings in (ko, en):
+        assert settings.server.host == "0.0.0.0"
+        assert settings.security.tls_certificate is None
+        assert settings.security.tls_private_key is None
+        assert settings.security.client_ca is None
+        assert settings.security.require_client_certificate is False
     # Identical everywhere it matters: same model, same tuning, same limits.
     assert ko.model.path == en.model.path
     assert ko.streaming == en.streaming
