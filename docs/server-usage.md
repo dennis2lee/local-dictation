@@ -239,7 +239,7 @@ Everything here is handed to faster-whisper unchanged.
 | Key | Default | Accepts | What it does |
 | --- | --- | --- | --- |
 | `path` | `<prefix>/models/large-v3-turbo` | a directory holding `model.bin` | A CTranslate2 conversion, never a HuggingFace repo id: the server makes no outbound requests. `check` opens it. |
-| `device` | `cpu` | `cpu`, `cuda`, `auto` | `cuda` needs a CTranslate2 built with it and a GPU conversion of the model. Everything in these documents is measured on `cpu`. |
+| `device` | `cpu` | `cpu`, `cuda`, `auto` | `cuda` needs a CTranslate2 built with CUDA and an NVIDIA GPU. **On Apple Silicon there is no GPU option here at all**: CTranslate2 has no Metal backend, so `cuda` raises and `auto` resolves to `cpu`. Reaching an Apple GPU would mean a different inference backend, not a different value here. |
 | `compute_type` | `int8` | on CPU: `int8`, `int8_float32`, `float32` | Ask your own build rather than guessing: `python -c "import ctranslate2; print(ctranslate2.get_supported_compute_types('cpu'))"`. `int8` is what the latency budget assumes. |
 | `language` | `ko` | `ko`, `en` | There is no auto-detection. Each server transcribes one language, which is what makes a swapped port a detectable mistake rather than fluent nonsense. |
 | `beam_size` | `1` | ≥ 1 | `1` is greedy. Beam search roughly doubles wall-clock for an accuracy gain dictation — where the text is appearing as you watch — does not benefit from. |
