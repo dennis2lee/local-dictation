@@ -43,6 +43,31 @@ static void ld_backspace(int count) {
 static int ld_is_trusted(void) {
     return AXIsProcessTrusted() ? 1 : 0;
 }
+
+// Asks, rather than only checking.
+//
+// AXIsProcessTrusted answers the question silently, and an app that only ever
+// asks silently never appears in System Settings > Privacy & Security >
+// Accessibility at all — there is nothing for the user to switch on, and the
+// instructions we print name a row that is not there. Passing
+// kAXTrustedCheckOptionPrompt is what puts it in the list and shows the system
+// dialog offering to open the pane.
+//
+// Called once per launch, and only when the answer is already no, so a granted
+// install never sees a dialog.
+static int ld_request_trust(void) {
+    CFStringRef keys[] = { kAXTrustedCheckOptionPrompt };
+    CFTypeRef values[] = { kCFBooleanTrue };
+    CFDictionaryRef options = CFDictionaryCreate(
+        kCFAllocatorDefault, (const void **)keys, (const void **)values, 1,
+        &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+    if (options == NULL) {
+        return AXIsProcessTrusted() ? 1 : 0;
+    }
+    Boolean trusted = AXIsProcessTrustedWithOptions(options);
+    CFRelease(options);
+    return trusted ? 1 : 0;
+}
 */
 import "C"
 
@@ -62,11 +87,16 @@ const unicodeChunk = 20
 type darwinTyper struct{}
 
 func newPlatform() (platformType, error) {
-	if C.ld_is_trusted() == 0 {
+	// Request rather than check. The difference is whether the app is in the
+	// Accessibility list at all: macOS adds it when it asks, and until then the
+	// instructions below name a row the user cannot find.
+	if C.ld_request_trust() == 0 {
 		return nil, errors.New(
-			"Local Dictation is not trusted for Accessibility. " +
-				"Open System Settings > Privacy & Security > Accessibility, " +
-				"turn on Local Dictation, and restart the app")
+			"Local Dictation is not trusted for Accessibility, so it cannot type. " +
+				"macOS should have offered to open System Settings > Privacy & " +
+				"Security > Accessibility — turn Local Dictation on there, then " +
+				"restart the app. If the row is missing, add it with + and pick " +
+				"Local Dictation from Applications")
 	}
 	return &keystrokeComposer{typer: &darwinTyper{}}, nil
 }

@@ -15,6 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 VERSION="0.1.0"
 OUTPUT="$ROOT/dist"
 IDENTITY=""
+BUNDLE_ID="com.local-dictation.client"
 ARCHS="arm64,amd64"
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -104,7 +105,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
     <key>CFBundleName</key>                  <string>Local Dictation</string>
     <key>CFBundleDisplayName</key>           <string>Local Dictation</string>
     <key>CFBundleExecutable</key>            <string>local-dictation</string>
-    <key>CFBundleIdentifier</key>            <string>com.local-dictation.client</string>
+    <key>CFBundleIdentifier</key>            <string>$BUNDLE_ID</string>
     <key>CFBundleVersion</key>               <string>$VERSION</string>
     <key>CFBundleShortVersionString</key>    <string>$VERSION</string>
     <key>CFBundlePackageType</key>           <string>APPL</string>
@@ -149,10 +150,27 @@ ENT
   rm -f "$ENTITLEMENTS"
   codesign --verify --strict --verbose=2 "$APP"
 else
-  # An unsigned bundle still runs, but only after the user clears Gatekeeper by
-  # hand. Say so rather than letting them find out.
-  info "not signed — recipients will need to right-click > Open the first time"
+  # No Developer ID, but the bundle still has to carry a signature under its own
+  # identifier. What the Go linker leaves behind is a "linker-signed" ad-hoc
+  # signature whose identifier is `a.out`, and macOS keys privacy grants on
+  # exactly that identity: the microphone permission is asked for again every
+  # time, and the app never earns a stable place in the Accessibility list. An
+  # ad-hoc signature over the whole bundle costs nothing, needs no certificate,
+  # and fixes both.
+  #
+  # It is not a Gatekeeper signature. Recipients still clear that by hand.
+  info "no signing identity — signing ad-hoc so macOS can remember permissions"
+  codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP"
+  codesign --verify --strict --verbose=2 "$APP"
+  info "ad-hoc signed — recipients will need to right-click > Open the first time"
 fi
+
+# Whichever branch ran, the identifier has to be the bundle's own. Getting this
+# wrong is silent: the app installs, opens, and then asks for the microphone on
+# every launch forever.
+signed_as="$(codesign -dv --verbose=2 "$APP" 2>&1 | sed -n 's/^Identifier=//p')"
+[[ "$signed_as" == "$BUNDLE_ID" ]] || die "signed as '$signed_as', expected '$BUNDLE_ID'"
+
 
 info "built $APP"
 du -sh "$APP"
