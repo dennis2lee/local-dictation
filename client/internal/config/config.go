@@ -111,6 +111,24 @@ func (h Hotkey) String() string {
 	return strings.Join(append(append([]string{}, h.Modifiers...), h.Key), " + ")
 }
 
+// Input is how transcribed text reaches the cursor.
+type Input struct {
+	// LivePreview types the volatile tail as Whisper produces it and rewrites
+	// it whenever Whisper changes its mind.
+	//
+	// Off by default, and the reason is that neither platform here has a real
+	// IME behind it. Both run on synthetic keystrokes, so "provisional text"
+	// means real characters typed into the document and backspaced out again:
+	// every decode pass removes the whole tail, types the newly settled words,
+	// and types the tail back. At speaking speed that is hundreds of
+	// keystrokes a second, and it falls behind the speaker rather than
+	// catching up.
+	//
+	// With it off, nothing is typed until the server says a word has settled,
+	// and then it is typed once. Text arrives a beat later and never moves.
+	LivePreview bool `json:"live_preview"`
+}
+
 // Update says where a newer build is looked for.
 type Update struct {
 	// ManifestURL is an internal HTTPS URL. Empty means the check falls back
@@ -137,6 +155,7 @@ type Config struct {
 	Local    Local             `json:"local"`
 	Audio    Audio             `json:"audio"`
 	Hotkey   Hotkey            `json:"hotkey"`
+	Input    Input             `json:"input"`
 	Update   Update            `json:"update"`
 }
 

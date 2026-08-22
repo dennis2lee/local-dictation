@@ -122,10 +122,18 @@ Shows the installed version. **Check for updates** looks for a newer one, and
 the section header line tells you where it will look before you press it.
 
 By default that is this project's own releases on github.com. When a newer one
-exists, the version and a link to its notes appear, along with a **Download**
-button showing how large the installer is. Downloading puts the installer in
-your `Downloads` folder and stops there — quit Local Dictation and open the file
-yourself to install it. The app never runs an installer on your behalf.
+exists, the version and a link to its notes appear, along with **Download and
+install**, showing how large it is.
+
+Pressing it downloads the installer, checks it, and hands it to the operating
+system's own installer — Installer.app on macOS, `msiexec` on Windows. Both ask
+for administrator authorisation themselves, in their own window; Local
+Dictation never sees a password. It then closes, because the application it is
+running from is exactly what is being replaced, and reopens once the install
+finishes.
+
+If the installer will not start, the message says so and the downloaded file is
+still in your `Downloads` folder — opening it by hand is the same install.
 
 The download is checked against the `SHA256SUMS` published with that release
 before it is kept; a file that does not match is deleted rather than saved. What
@@ -136,6 +144,20 @@ still there, so fetching it by hand stays your decision.
 
 Nothing is sent anywhere. The check is one HTTPS GET for the release list, and
 it only happens when you press the button.
+
+### Typing
+
+**Show words before they settle**, under Shortcut and typing, is off.
+
+With it off a word is typed once, when the server is sure of it. Text appears a
+beat behind you and never moves.
+
+With it on, the tail Whisper has not settled on yet is typed as it is guessed
+and rewritten whenever it changes. It looks livelier, and it cannot keep up with
+a fast speaker: neither platform here has a real input method behind it, so
+rewriting means backspacing real characters out of your document and typing
+them again — for one short sentence, forty-six keystrokes instead of fourteen.
+If dictation lags behind your voice, this is the setting.
 
 **On a managed deployment**, set `update.manifest_url` and `update.public_key`
 in `settings.json` — beside `startup.log`, in the folders listed under

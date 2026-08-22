@@ -90,6 +90,7 @@ func New(options Options) (*App, error) {
 		adapter = disabledPlatform{reason: err}
 	}
 	application.composer = input.NewComposer(adapter)
+	application.composer.SetLivePreview(options.Settings.Input.LivePreview)
 
 	application.dialer = dial.New(options.Settings, options.StateDir)
 	application.controller = session.New(session.Options{
@@ -225,6 +226,8 @@ func (a *App) ApplySettings(updated config.Config) error {
 	if err := a.dialer.Update(ctx, updated); err != nil {
 		return fmt.Errorf("apply the server settings: %w", err)
 	}
+
+	a.composer.SetLivePreview(updated.Input.LivePreview)
 
 	if updated.Hotkey.String() != previous.Hotkey.String() {
 		a.registerHotkey(updated.Hotkey)

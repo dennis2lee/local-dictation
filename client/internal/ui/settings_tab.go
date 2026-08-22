@@ -63,9 +63,10 @@ type settingsTab struct {
 	testStop    chan struct{}
 	textAdapter *widget.Label
 
-	// Shortcut
+	// Shortcut and typing
 	modifierChecks map[string]*widget.Check
 	shortcutKey    *widget.Select
+	livePreview    *widget.Check
 
 	// Update
 	updateStatus   *widget.Label
@@ -383,11 +384,19 @@ func (s *settingsTab) buildShortcutSection(settings config.Config) fyne.CanvasOb
 	s.shortcutKey = widget.NewSelect(keys, nil)
 	s.shortcutKey.SetSelected(settings.Hotkey.Key)
 
+	s.livePreview = widget.NewCheck("Show words before they settle", nil)
+	s.livePreview.SetChecked(settings.Input.LivePreview)
+
 	return container.NewVBox(
-		sectionHeading("Shortcut"),
+		sectionHeading("Shortcut and typing"),
 		row,
 		s.shortcutKey,
-		widget.NewLabel("The shortcut works in any application. It takes effect when you save."),
+		caption("The shortcut works in any application. It takes effect when you save."),
+		s.livePreview,
+		caption("Off, a word is typed once, when the server is sure of it. On, the "+
+			"unsettled tail is typed as it is guessed and rewritten whenever it "+
+			"changes — which looks livelier and cannot keep up with a fast speaker, "+
+			"because rewriting means backspacing real characters out of your document."),
 	)
 }
 
@@ -412,7 +421,7 @@ func (s *settingsTab) buildUpdateSection(settings config.Config) fyne.CanvasObje
 	// Nothing to download until a check finds something, and a button that is
 	// there but does nothing is worse than one that appears when it applies.
 	s.downloadButton = primaryButton(
-		widget.NewButtonWithIcon("Download", theme.DownloadIcon(), s.onDownloadUpdate))
+		widget.NewButtonWithIcon("Download and install", theme.DownloadIcon(), s.onDownloadUpdate))
 	s.downloadButton.Hide()
 
 	return container.NewVBox(
@@ -460,7 +469,7 @@ func (s *settingsTab) onCheckUpdate() {
 				s.updateStatus.SetText(fmt.Sprintf("Update check failed: %v", err))
 			case result.Newer:
 				s.updateStatus.SetText(offerText(result))
-				s.downloadButton.SetText(fmt.Sprintf("Download (%s)", humanSize(result.Artifact.Size)))
+				s.downloadButton.SetText(fmt.Sprintf("Download and install (%s)", humanSize(result.Artifact.Size)))
 				s.downloadButton.Show()
 			default:
 				s.updateStatus.SetText(fmt.Sprintf(
@@ -492,11 +501,55 @@ func (s *settingsTab) onDownloadUpdate() {
 				return
 			}
 			s.downloadButton.Hide()
-			s.updateStatus.SetText(fmt.Sprintf(
-				"Saved to %s.\nQuit Local Dictation and open it to install %s.",
-				saved, offered.Available))
+			s.installDownloaded(saved, offered.Available)
 		})
 	})
+}
+
+// installDownloaded hands the verified file to the platform installer, then
+// closes the application so it can be replaced.
+//
+// The quit is not optional and not a tidy-up: on both platforms the bundle
+// this process is executing from is exactly what the installer overwrites. A
+// second process, started first, waits for the installer to finish and opens
+// the app again — see update.Install.
+func (s *settingsTab) installDownloaded(saved, version string) {
+	if err := update.Install(saved, applicationPath()); err != nil {
+		// Nothing has been lost: the file is downloaded and verified, and
+		// opening it by hand is the same install.
+		s.updateStatus.SetText(fmt.Sprintf(
+			"Downloaded %s, but the installer would not start: %v\n"+
+				"Open %s yourself to finish.", version, err, saved))
+		s.downloadButton.Show()
+		s.downloadButton.Enable()
+		return
+	}
+	s.updateStatus.SetText(fmt.Sprintf(
+		"Installing %s. Local Dictation will close and reopen when it is done.",
+		version))
+	// Give the sentence above a moment to be read, then go. The installer is
+	// already running and does not depend on this process staying alive.
+	s.away(func() {
+		time.Sleep(2 * time.Second)
+		fyne.Do(s.app.Quit)
+	})
+}
+
+// applicationPath is the bundle or executable to reopen after an install.
+func applicationPath() string {
+	executable, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+		executable = resolved
+	}
+	// macOS: .../Local Dictation.app/Contents/MacOS/local-dictation, and it is
+	// the bundle that `open` wants, not the executable inside it.
+	if index := strings.Index(executable, ".app/Contents/MacOS/"); index >= 0 {
+		return executable[:index+len(".app")]
+	}
+	return executable
 }
 
 // away runs the network part of an update off the Fyne goroutine.
@@ -584,6 +637,7 @@ func (s *settingsTab) onSave() {
 	device := s.selectedDevice()
 	settings.Audio.DeviceID, settings.Audio.DeviceName = device.ID, device.Name
 	settings.Hotkey = s.shortcutFromForm()
+	settings.Input.LivePreview = s.livePreview.Checked
 
 	if err := s.app.ApplySettings(settings); err != nil {
 		s.message.SetText(err.Error())

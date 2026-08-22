@@ -9,6 +9,13 @@
 // Committed text is real text in the document. Marked text is not: it is
 // underlined, it can be replaced wholesale, and if the process dies the
 // application discards it. That is exactly the behaviour partial results want.
+//
+// Except that neither platform adapter here is a real IME. Both are synthetic
+// keystrokes, where marked text is a fiction maintained by typing characters
+// and backspacing them out again — so a revised tail costs a burst of
+// keystrokes on every decode pass, and someone speaking quickly outruns it.
+// So the tail is not typed at all unless input.live_preview asks for it: the
+// default is to wait until a word has settled and type it once.
 package input
 
 import (
@@ -55,6 +62,10 @@ type Composer struct {
 	committed    string
 	lastRevision int64
 	composing    bool
+	// livePreview types the volatile tail as it arrives. Off, the tail is
+	// never typed at all, which is the difference between appending words and
+	// rewriting a sentence on every decode pass. See config.Input.
+	livePreview bool
 	// Utterance whose composition was torn down mid-flight. Further events for
 	// it must be ignored: its committed characters are already in the document,
 	// and re-applying its stable prefix would duplicate them.
@@ -68,6 +79,14 @@ type Composer struct {
 
 func NewComposer(platform Platform) *Composer {
 	return &Composer{platform: platform}
+}
+
+// SetLivePreview turns the volatile tail on or off. Called from settings, and
+// only while nothing is being dictated.
+func (c *Composer) SetLivePreview(on bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.livePreview = on
 }
 
 // PlatformName reports which adapter is in use.
@@ -141,7 +160,14 @@ func (c *Composer) Apply(event protocol.Transcript) error {
 		c.committed = event.Stable
 	}
 
-	if err := c.platform.SetMarkedText(event.Partial); err != nil {
+	// Empty rather than skipped when the preview is off: passing "" is what
+	// clears any tail left over from before it was turned off, and on a
+	// composer that has never marked anything it does nothing at all.
+	marked := ""
+	if c.livePreview {
+		marked = event.Partial
+	}
+	if err := c.platform.SetMarkedText(marked); err != nil {
 		return fmt.Errorf("set marked text: %w", err)
 	}
 

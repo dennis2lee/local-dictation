@@ -20,6 +20,11 @@ type harness struct {
 	session    *fakeSession
 }
 
+func previewComposer(c *input.Composer) *input.Composer {
+	c.SetLivePreview(true)
+	return c
+}
+
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	session := newFakeSession()
@@ -28,9 +33,13 @@ func newHarness(t *testing.T) *harness {
 	platform := input.NewFakePlatform()
 
 	controller := New(Options{
-		Dialer:          dialer,
-		Audio:           audio,
-		Composer:        input.NewComposer(platform),
+		Dialer: dialer,
+		Audio:  audio,
+		// With the volatile tail shown, so these can assert on text arriving
+		// as it is guessed. What gets typed and when is the composer's
+		// business and is covered there; this harness is about whether a
+		// transcript reaches the cursor at all.
+		Composer:        previewComposer(input.NewComposer(platform)),
 		ClientVersion:   "0.1.0-test",
 		FinalizeTimeout: 2 * time.Second,
 	})

@@ -8,6 +8,14 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 )
 
+// previewComposer turns the volatile tail back on. It is off by default
+// because typing and untyping it cannot keep up with a fast speaker, but the
+// tests below are the ones describing that behaviour, so they ask for it.
+func previewComposer(c *Composer) *Composer {
+	c.SetLivePreview(true)
+	return c
+}
+
 func transcript(utterance string, revision int64, stable, partial string, final bool) protocol.Transcript {
 	return protocol.Transcript{
 		Type:            "transcript",
@@ -34,7 +42,7 @@ var koreanStream = []protocol.Transcript{
 
 func TestTheUserSeesTheGrowingHypothesisAtEveryStep(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	for _, event := range koreanStream {
 		if err := composer.Apply(event); err != nil {
@@ -54,7 +62,7 @@ func TestTheUserSeesTheGrowingHypothesisAtEveryStep(t *testing.T) {
 
 func TestNothingIsCommittedTwice(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 	for _, event := range koreanStream {
 		if err := composer.Apply(event); err != nil {
 			t.Fatal(err)
@@ -71,7 +79,7 @@ func TestNothingIsCommittedTwice(t *testing.T) {
 
 func TestOnlyChangedStableTextIsCommitted(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 	for _, event := range koreanStream {
 		if err := composer.Apply(event); err != nil {
 			t.Fatal(err)
@@ -89,7 +97,7 @@ func TestOnlyChangedStableTextIsCommitted(t *testing.T) {
 
 func TestStaleRevisionsAreDiscarded(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	for _, event := range koreanStream[:5] {
 		if err := composer.Apply(event); err != nil {
@@ -114,7 +122,7 @@ func TestStaleRevisionsAreDiscarded(t *testing.T) {
 
 func TestANewUtteranceStartsAFreshPrefix(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	if err := composer.Apply(transcript("u-1", 1, "hello world", "", true)); err != nil {
 		t.Fatal(err)
@@ -135,7 +143,7 @@ func TestANewUtteranceStartsAFreshPrefix(t *testing.T) {
 
 func TestDropPartialKeepsCommittedTextAndLosesTheGuess(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	for _, event := range koreanStream[:5] {
 		if err := composer.Apply(event); err != nil {
@@ -160,7 +168,7 @@ func TestDropPartialKeepsCommittedTextAndLosesTheGuess(t *testing.T) {
 
 func TestEventsForAnAbandonedUtteranceAreIgnored(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	for _, event := range koreanStream[:5] {
 		if err := composer.Apply(event); err != nil {
@@ -184,7 +192,7 @@ func TestEventsForAnAbandonedUtteranceAreIgnored(t *testing.T) {
 
 func TestARetractedPrefixIsRefused(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	for _, event := range koreanStream[:5] {
 		if err := composer.Apply(event); err != nil {
@@ -204,7 +212,7 @@ func TestARetractedPrefixIsRefused(t *testing.T) {
 
 func TestFinishCommitsMarkedTextWhenTheServerNeverSaidFinal(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	for _, event := range koreanStream[:6] {
 		if err := composer.Apply(event); err != nil {
@@ -226,7 +234,7 @@ func TestFinishCommitsMarkedTextWhenTheServerNeverSaidFinal(t *testing.T) {
 
 func TestResetDoesNotTouchTheDocument(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 	for _, event := range koreanStream {
 		if err := composer.Apply(event); err != nil {
 			t.Fatal(err)
@@ -250,7 +258,7 @@ func TestResetDoesNotTouchTheDocument(t *testing.T) {
 func TestAPlatformFailureIsReportedNotSwallowed(t *testing.T) {
 	platform := NewFakePlatform()
 	platform.FailCommit = errors.New("TSF said no")
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 
 	err := composer.Apply(transcript("u-1", 1, "hello ", "world", false))
 	if err == nil || !strings.Contains(err.Error(), "TSF said no") {
@@ -260,7 +268,7 @@ func TestAPlatformFailureIsReportedNotSwallowed(t *testing.T) {
 
 func TestCloseCancelsAnOpenComposition(t *testing.T) {
 	platform := NewFakePlatform()
-	composer := NewComposer(platform)
+	composer := previewComposer(NewComposer(platform))
 	if err := composer.Apply(koreanStream[0]); err != nil {
 		t.Fatal(err)
 	}
