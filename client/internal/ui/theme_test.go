@@ -29,9 +29,9 @@ func assertColor(t *testing.T, name string, got color.Color, want color.NRGBA) {
 }
 
 // The palette is pinned here so a change to it has to be a deliberate one. It
-// started as the plan's mockup and was pulled quieter from there — darker text,
-// greyer chrome, a deeper accent — because bright and friendly is the wrong
-// register for a tool that sits open beside real work.
+// began as the plan's light mockup and is now a dark one, chosen from three
+// candidates rendered through Fyne rather than drawn in something Fyne cannot
+// reproduce.
 func TestTheThemeUsesThePlansPalette(t *testing.T) {
 	applied := planTheme{}
 	for _, want := range []struct {
@@ -53,8 +53,8 @@ func TestTheThemeUsesThePlansPalette(t *testing.T) {
 	}
 }
 
-// The plan specifies one look. Returning the desktop's dark palette for half
-// the colours and the plan's for the rest is the one outcome worth ruling out.
+// One look. Returning the desktop's light palette for half the colours and
+// this one for the rest is the outcome worth ruling out.
 func TestTheThemeIsTheSameInEitherVariant(t *testing.T) {
 	applied := planTheme{}
 	for _, name := range []fyne.ThemeColorName{
@@ -148,4 +148,26 @@ func TestHoveringBarelyShowsAndPressingClearlyDoes(t *testing.T) {
 	if pressed < hover*2 {
 		t.Errorf("pressing (alpha %d) is not clearly stronger than hovering (alpha %d)", pressed, hover)
 	}
+}
+
+// The accent is cyan and it is all over the window. A "connected" light the
+// same colour reads as decoration rather than as an answer, which is the one
+// thing that dot exists to be.
+func TestTheConnectedLightIsNotTheAccent(t *testing.T) {
+	ar, ag, ab, _ := rgba(t, planAccent)
+	gr, gg, gb, _ := rgba(t, planGreen)
+
+	distance := abs(int(ar)-int(gr)) + abs(int(ag)-int(gg)) + abs(int(ab)-int(gb))
+	if distance < 96 {
+		t.Errorf("accent #%02X%02X%02X and the connected light #%02X%02X%02X are "+
+			"only %d apart; the dot will read as decoration",
+			ar, ag, ab, gr, gg, gb, distance)
+	}
+}
+
+func abs(value int) int {
+	if value < 0 {
+		return -value
+	}
+	return value
 }

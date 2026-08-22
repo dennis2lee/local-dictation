@@ -91,6 +91,7 @@ func New(options Options) (*App, error) {
 	}
 	application.composer = input.NewComposer(adapter)
 	application.composer.SetLivePreview(options.Settings.Input.LivePreview)
+	capture.SetGain(options.Settings.Audio.InputGain())
 
 	application.dialer = dial.New(options.Settings, options.StateDir)
 	application.controller = session.New(session.Options{
@@ -228,6 +229,7 @@ func (a *App) ApplySettings(updated config.Config) error {
 	}
 
 	a.composer.SetLivePreview(updated.Input.LivePreview)
+	a.capture.SetGain(updated.Audio.InputGain())
 
 	if updated.Hotkey.String() != previous.Hotkey.String() {
 		a.registerHotkey(updated.Hotkey)

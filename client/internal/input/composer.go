@@ -27,6 +27,17 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 )
 
+// utteranceSeparator goes after a finished utterance so the next one does not
+// run into it.
+//
+// The server splits on silence, so one press of the shortcut usually produces
+// several utterances, and without this they arrive as
+// "회의를 시작합니다.다음 주에" — correct text that nobody wants to read. A
+// space rather than a newline: dictation goes into the middle of a sentence at
+// least as often as it starts a paragraph, and a stray line break is much
+// harder to undo than a stray space.
+const utteranceSeparator = " "
+
 // ErrStablePrefixChanged means the server retracted text it had committed,
 // which protocol v1 forbids. The composer refuses to guess: committed text is
 // already in the user's document and cannot be taken back.
@@ -66,6 +77,10 @@ type Composer struct {
 	// never typed at all, which is the difference between appending words and
 	// rewriting a sentence on every decode pass. See config.Input.
 	livePreview bool
+	// wrote records whether this utterance has put anything in the document.
+	// A separator only makes sense after text: a press of the shortcut that
+	// caught no speech should leave the document exactly as it was.
+	wrote bool
 	// Utterance whose composition was torn down mid-flight. Further events for
 	// it must be ignored: its committed characters are already in the document,
 	// and re-applying its stable prefix would duplicate them.
@@ -127,6 +142,7 @@ func (c *Composer) Apply(event protocol.Transcript) error {
 		}
 		c.utteranceID = event.UtteranceID
 		c.committed = ""
+		c.wrote = false
 		c.UtterancesShown++
 	}
 
@@ -158,6 +174,7 @@ func (c *Composer) Apply(event protocol.Transcript) error {
 			return fmt.Errorf("commit text: %w", err)
 		}
 		c.committed = event.Stable
+		c.wrote = true
 	}
 
 	// Empty rather than skipped when the preview is off: passing "" is what
@@ -176,11 +193,33 @@ func (c *Composer) Apply(event protocol.Transcript) error {
 	if event.Final {
 		// The server sends final with an empty partial, so there is no marked
 		// text left to worry about; ending the composition just releases it.
+		if err := c.separateLocked(); err != nil {
+			return err
+		}
 		if err := c.endCompositionLocked(); err != nil {
 			return err
 		}
 		c.utteranceID = ""
 		c.committed = ""
+	}
+	return nil
+}
+
+// separateLocked types the gap between this utterance and whatever comes next.
+//
+// Only after something was written, and only when the text does not already
+// end in whitespace — Whisper occasionally ends a segment with a space of its
+// own, and two would be as visible as none.
+func (c *Composer) separateLocked() error {
+	if !c.wrote || utteranceSeparator == "" {
+		return nil
+	}
+	c.wrote = false
+	if trailing := strings.TrimRight(c.committed, " \t\n"); trailing != c.committed {
+		return nil
+	}
+	if err := c.platform.CommitText(utteranceSeparator); err != nil {
+		return fmt.Errorf("commit the utterance separator: %w", err)
 	}
 	return nil
 }
@@ -208,7 +247,12 @@ func (c *Composer) DropPartial() error {
 func (c *Composer) Finish() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// Marked text becomes real when the composition ends, so the separator has
+	// to go after that, not before it.
 	err := c.endCompositionLocked()
+	if err == nil {
+		err = c.separateLocked()
+	}
 	c.abandoned = c.utteranceID
 	c.utteranceID = ""
 	c.committed = ""
@@ -225,6 +269,7 @@ func (c *Composer) Reset() {
 	c.abandoned = ""
 	c.lastRevision = 0
 	c.composing = false
+	c.wrote = false
 }
 
 // Close releases the platform adapter.

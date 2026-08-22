@@ -95,6 +95,19 @@ type Audio struct {
 	DeviceID string `json:"device_id"`
 	// DeviceName is kept only so the UI can say which device went missing.
 	DeviceName string `json:"device_name"`
+	// Gain multiplies the captured signal. 1 leaves it alone. Some
+	// microphones arrive quiet enough that Whisper hears a whisper, and the
+	// decoder has no automatic gain of its own — quiet in is quiet out.
+	Gain float64 `json:"gain"`
+}
+
+// InputGain is Audio.Gain with the zero value read as "leave it alone", so a
+// settings file written before this existed does not silence the microphone.
+func (a Audio) InputGain() float64 {
+	if a.Gain == 0 {
+		return 1
+	}
+	return a.Gain
 }
 
 // Hotkey is the global activation chord.
@@ -355,6 +368,10 @@ func (c Config) Validate() error {
 		if c.Local.CPUThreads < 0 {
 			problems = append(problems, "CPU threads cannot be negative")
 		}
+	}
+
+	if c.Audio.Gain != 0 && (c.Audio.Gain < 0.5 || c.Audio.Gain > 8) {
+		problems = append(problems, "audio.gain must be between 0.5 and 8")
 	}
 
 	if c.Update.ManifestURL != "" {

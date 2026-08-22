@@ -99,7 +99,8 @@ func TestStatesFollowTheDocumentedSequence(t *testing.T) {
 	if h.audio.Stopped() != 1 {
 		t.Errorf("microphone stopped %d times, want 1", h.audio.Stopped())
 	}
-	if got := h.platform.Committed(); got != "오늘 오후 세 시에" {
+	// Trailing space: a finished utterance carries the gap to the next one.
+	if got := h.platform.Committed(); got != "오늘 오후 세 시에 " {
 		t.Errorf("committed = %q", got)
 	}
 }
@@ -160,8 +161,8 @@ func TestTranscriptsLandAtTheCursorWhileListening(t *testing.T) {
 	if err := h.controller.Stop(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := h.platform.Committed(); got != "오늘 오후" {
-		t.Errorf("committed = %q, want %q", got, "오늘 오후")
+	if got, want := h.platform.Committed(), "오늘 오후 "; got != want {
+		t.Errorf("committed = %q, want %q", got, want)
 	}
 }
 

@@ -86,7 +86,11 @@ func TestTheDocumentTracksTheHypothesisThroughSyntheticTyping(t *testing.T) {
 		if err := composer.Apply(event); err != nil {
 			t.Fatalf("revision %d: %v", event.Revision, err)
 		}
-		if got, want := typer.String(), event.Text(); got != want {
+		want := event.Text()
+		if event.Final {
+			want += " "
+		}
+		if got := typer.String(); got != want {
 			t.Errorf("revision %d: document = %q, want %q", event.Revision, got, want)
 		}
 	}
@@ -229,7 +233,7 @@ func TestNothingIsBackspacedWhenTheTailIsNotShown(t *testing.T) {
 	if typer.backspaces != 0 {
 		t.Errorf("backspaced %d characters with the tail hidden", typer.backspaces)
 	}
-	if got := typer.String(); got != "오늘 오후 세 시에 회의를" {
+	if got := typer.String(); got != "오늘 오후 세 시에 회의를 " {
 		t.Errorf("document = %q", got)
 	}
 }
@@ -246,7 +250,8 @@ func TestEachCharacterIsTypedOnce(t *testing.T) {
 		}
 	}
 
-	final := "오늘 오후 세 시에 회의를"
+	// The sentence plus the space that separates it from the next utterance.
+	final := "오늘 오후 세 시에 회의를 "
 	if quiet.typed != len([]rune(final)) {
 		t.Errorf("typed %d characters for a %d-character sentence",
 			quiet.typed, len([]rune(final)))

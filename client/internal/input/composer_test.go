@@ -48,11 +48,16 @@ func TestTheUserSeesTheGrowingHypothesisAtEveryStep(t *testing.T) {
 		if err := composer.Apply(event); err != nil {
 			t.Fatalf("apply revision %d: %v", event.Revision, err)
 		}
-		if got, want := platform.Document(), event.Text(); got != want {
+		want := event.Text()
+		if event.Final {
+			// A finished utterance carries the gap to the next one.
+			want += " "
+		}
+		if got := platform.Document(); got != want {
 			t.Errorf("revision %d: document = %q, want %q", event.Revision, got, want)
 		}
 	}
-	if got := platform.Committed(); got != "오늘 오후 세 시에 회의를" {
+	if got := platform.Committed(); got != "오늘 오후 세 시에 회의를 " {
 		t.Errorf("final committed text = %q", got)
 	}
 	if platform.Composing() {
@@ -87,8 +92,9 @@ func TestOnlyChangedStableTextIsCommitted(t *testing.T) {
 	}
 	// Five stable growth steps in this stream; anything more means we are
 	// re-committing text the document already has.
-	if platform.Commits != 5 {
-		t.Errorf("committed %d times, want 5", platform.Commits)
+	// Five for the text, one for the separator after the final event.
+	if platform.Commits != 6 {
+		t.Errorf("committed %d times, want 6", platform.Commits)
 	}
 	if platform.Begins != 1 {
 		t.Errorf("began composition %d times, want 1", platform.Begins)
@@ -133,7 +139,10 @@ func TestANewUtteranceStartsAFreshPrefix(t *testing.T) {
 	if err := composer.Apply(transcript("u-2", 3, "second sentence", "", true)); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := platform.Committed(), "hello worldsecond sentence"; got != want {
+	// Was "hello worldsecond sentence" until a separator was added. The
+	// server splits on silence, so this is what a paragraph of dictation
+	// looked like: every sentence welded to the next.
+	if got, want := platform.Committed(), "hello world second sentence "; got != want {
 		t.Errorf("committed = %q, want %q", got, want)
 	}
 	if composer.UtterancesShown != 2 {
@@ -280,5 +289,61 @@ func TestCloseCancelsAnOpenComposition(t *testing.T) {
 	}
 	if !platform.Closed() {
 		t.Error("platform was not closed")
+	}
+}
+
+// -- one utterance does not run into the next ------------------------------
+
+// The complaint: "문장들이 모두 붙어 보이니깐" — one press of the shortcut
+// produces an utterance per silence, and they arrived welded together.
+func TestFinishedUtterancesAreSeparated(t *testing.T) {
+	platform := NewFakePlatform()
+	composer := NewComposer(platform)
+
+	for _, event := range []protocol.Transcript{
+		transcript("u-1", 1, "오늘 오후 세 시에 회의를 시작합니다.", "", true),
+		transcript("u-2", 2, "다음 주에 다시 논의하겠습니다.", "", true),
+	} {
+		if err := composer.Apply(event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want := "오늘 오후 세 시에 회의를 시작합니다. 다음 주에 다시 논의하겠습니다. "
+	if got := platform.Committed(); got != want {
+		t.Errorf("committed = %q,\n           want %q", got, want)
+	}
+}
+
+// Whisper sometimes ends a segment with a space of its own. Two spaces are as
+// visible as none.
+func TestAnUtteranceThatAlreadyEndsInSpaceIsNotPaddedTwice(t *testing.T) {
+	platform := NewFakePlatform()
+	composer := NewComposer(platform)
+
+	if err := composer.Apply(transcript("u-1", 1, "hello world ", "", true)); err != nil {
+		t.Fatal(err)
+	}
+	if err := composer.Apply(transcript("u-2", 2, "again", "", true)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, want := platform.Committed(), "hello world again "; got != want {
+		t.Errorf("committed = %q, want %q", got, want)
+	}
+}
+
+// A shortcut press that caught no speech must leave the document exactly as it
+// was — not nudge the cursor along by a space.
+func TestAnUtteranceWithNoTextAddsNothing(t *testing.T) {
+	platform := NewFakePlatform()
+	composer := NewComposer(platform)
+
+	if err := composer.Apply(transcript("u-1", 1, "", "", true)); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := platform.Committed(); got != "" {
+		t.Errorf("committed = %q for an utterance with no speech in it", got)
 	}
 }

@@ -21,8 +21,16 @@ type Capture struct {
 	context *malgo.AllocatedContext
 	device  *malgo.Device
 	meter   *LevelMeter
+	gain    *gain
 	sink    func([]byte)
 }
+
+// SetGain changes the input multiplier. Safe to call while capturing: the
+// audio callback reads it atomically on every frame.
+func (c *Capture) SetGain(multiplier float64) { c.gain.set(multiplier) }
+
+// Gain reports the multiplier in force.
+func (c *Capture) Gain() float64 { return c.gain.get() }
 
 // NewCapture initialises the audio backend.
 func NewCapture() (*Capture, error) {
@@ -30,7 +38,7 @@ func NewCapture() (*Capture, error) {
 	if err != nil {
 		return nil, fmt.Errorf("initialise the audio backend: %w", err)
 	}
-	return &Capture{context: context, meter: NewLevelMeter()}, nil
+	return &Capture{context: context, gain: newGain(), meter: NewLevelMeter()}, nil
 }
 
 // Meter exposes the input level, for the microphone test in Settings.
@@ -100,6 +108,9 @@ func (c *Capture) Start(deviceID string, sink func([]byte)) error {
 			// frame is about to cross a goroutine boundary into the socket.
 			frame := make([]byte, len(input))
 			copy(frame, input)
+			// Before the meter, so what the meter shows is what the server
+			// will hear — including the clipping that too much gain causes.
+			c.gain.apply(frame)
 			c.meter.Push(frame)
 			if sink != nil {
 				sink(frame)

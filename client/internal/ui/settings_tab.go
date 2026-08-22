@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path"
 	"path/filepath"
@@ -58,7 +59,9 @@ type settingsTab struct {
 	// Microphone
 	microphone  *widget.Select
 	devices     []audio.Device
-	levelBar    *widget.ProgressBar
+	levelBar    *levelMeter
+	gain        *widget.Slider
+	gainLabel   *widget.Label
 	testButton  *widget.Button
 	testStop    chan struct{}
 	textAdapter *widget.Label
@@ -261,8 +264,24 @@ func (s *settingsTab) showHealth(indicator *led, health dial.Health) {
 
 func (s *settingsTab) buildMicrophoneSection(settings config.Config) fyne.CanvasObject {
 	s.microphone = widget.NewSelect(nil, nil)
-	s.levelBar = widget.NewProgressBar()
-	s.levelBar.Min, s.levelBar.Max = 0, 1
+	s.levelBar = newLevelMeter()
+
+	// A slider rather than a number: the useful range is small, the right
+	// value is found by watching the meter rather than by knowing it, and a
+	// text field would invite typing 40.
+	s.gainLabel = widget.NewLabel("")
+	s.gain = widget.NewSlider(audio.MinGain, audio.MaxGain)
+	s.gain.Step = 0.1
+	s.gain.SetValue(settings.Audio.InputGain())
+	s.showGain(settings.Audio.InputGain())
+	s.gain.OnChanged = func(value float64) {
+		s.showGain(value)
+		// Live, so the meter under it responds while the slider is moving —
+		// which is the only way to choose a value. Saved with everything else.
+		if s.app.capture != nil {
+			s.app.capture.SetGain(value)
+		}
+	}
 	s.testButton = widget.NewButtonWithIcon("Test microphone", theme.VolumeUpIcon(), s.onTestMicrophone)
 
 	available, reason := s.app.textAdapterAvailability()
@@ -277,7 +296,11 @@ func (s *settingsTab) buildMicrophoneSection(settings config.Config) fyne.Canvas
 	return container.NewVBox(
 		sectionHeading("Microphone"),
 		s.microphone,
-		container.NewBorder(nil, nil, nil, s.testButton, s.levelBar),
+		container.NewBorder(nil, nil, nil, s.testButton, s.levelBar.Object()),
+		container.NewBorder(nil, nil, caption("Input level"), s.gainLabel, s.gain),
+		caption("Raise this if the meter barely moves when you speak normally. "+
+			"Aim for the green segments with the odd amber peak; anything reaching "+
+			"red is clipping, which the decoder hears as distortion."),
 		widget.NewButtonWithIcon("Refresh device list", theme.ViewRefreshIcon(), func() {
 			s.refreshDevices(s.app.Settings().Audio.DeviceID)
 		}),
@@ -328,7 +351,7 @@ func (s *settingsTab) onTestMicrophone() {
 		s.testStop = nil
 		_ = s.app.capture.Stop()
 		s.testButton.SetText("Test microphone")
-		s.levelBar.SetValue(0)
+		s.levelBar.Set(0)
 		return
 	}
 
@@ -357,7 +380,7 @@ func (s *settingsTab) onTestMicrophone() {
 				return
 			case <-ticker.C:
 				peak, _ := s.app.capture.Meter().Level()
-				fyne.Do(func() { s.levelBar.SetValue(peak) })
+				fyne.Do(func() { s.levelBar.Set(peak) })
 			}
 		}
 	}()
@@ -408,6 +431,12 @@ func (s *settingsTab) shortcutFromForm() config.Hotkey {
 		}
 	}
 	return config.Hotkey{Modifiers: modifiers, Key: s.shortcutKey.Selected}
+}
+
+// showGain writes the multiplier as decibels, which is the unit anyone who has
+// touched an audio control before already reads.
+func (s *settingsTab) showGain(multiplier float64) {
+	s.gainLabel.SetText(fmt.Sprintf("%+.0f dB", 20*math.Log10(multiplier)))
 }
 
 // -- update ----------------------------------------------------------------
@@ -638,6 +667,7 @@ func (s *settingsTab) onSave() {
 	settings.Audio.DeviceID, settings.Audio.DeviceName = device.ID, device.Name
 	settings.Hotkey = s.shortcutFromForm()
 	settings.Input.LivePreview = s.livePreview.Checked
+	settings.Audio.Gain = audio.ClampGain(s.gain.Value)
 
 	if err := s.app.ApplySettings(settings); err != nil {
 		s.message.SetText(err.Error())

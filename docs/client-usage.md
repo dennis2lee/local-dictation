@@ -108,6 +108,22 @@ headset switches automatically. Choosing a specific device pins it; if that
 device is later unplugged, dictation reports it rather than silently recording
 from something else.
 
+The meter under it is a row of segments: green while you are at a good level,
+amber for loud, red for clipping. Watch it while you speak normally — the green
+segments with the occasional amber peak is what you want.
+
+**Input level** raises or lowers the signal before anything else sees it. Some
+microphones — laptop arrays with noise suppression in front of them, headsets
+sitting at a low mixer position — arrive quiet enough that Whisper hears a
+whisper, and the decoder has no automatic gain of its own: quiet in is quiet
+out, and the transcript pays for it.
+
+Move the slider while watching the meter; it takes effect immediately, so the
+meter is the instrument for setting it. It is a plain multiplier, not a
+compressor, so it cannot pump or breathe mid-sentence — and it cannot rescue a
+signal that was already clipping. If the meter is reaching red before you touch
+it, turn the microphone down at the system mixer instead.
+
 ### Shortcut
 
 Choose the modifiers and key. The change takes effect when you save.
