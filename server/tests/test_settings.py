@@ -102,3 +102,27 @@ def test_shipped_configs_are_valid():
     assert ko.model.path == en.model.path
     assert ko.streaming == en.streaming
     assert ko.limits == en.limits
+
+
+def test_every_setting_is_written_down():
+    """A setting nobody documented is a setting nobody can choose.
+
+    The reference in docs/server-usage.md is a table per section, one row per
+    key. This asserts a row exists for every field the loader accepts, so
+    adding a setting without documenting it fails here rather than leaving
+    someone to read settings.py to find out what they are allowed to write.
+    """
+    from dataclasses import fields as dataclass_fields
+
+    from tests.conftest import SERVER_ROOT
+    from app.settings import _SECTIONS
+
+    reference = (SERVER_ROOT.parent / "docs" / "server-usage.md").read_text(encoding="utf-8")
+
+    undocumented = [
+        f"{section}.{field.name}"
+        for section, cls in _SECTIONS.items()
+        for field in dataclass_fields(cls)
+        if f"| `{field.name}` |" not in reference
+    ]
+    assert not undocumented, "no row in docs/server-usage.md for: " + ", ".join(undocumented)

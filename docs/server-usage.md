@@ -196,7 +196,10 @@ rejected at startup.
 The two language servers count separately: `max_sessions: 2` in each is four
 concurrent sessions on the machine, which is usually not what someone means.
 
-### Settings worth understanding
+### The handful worth understanding first
+
+Ten of the thirty-four, and the ones a real deployment usually touches. The
+[full reference](#every-setting) is below.
 
 | Setting | Why it matters |
 | --- | --- |
@@ -210,6 +213,106 @@ concurrent sessions on the machine, which is usually not what someone means.
 | `server.host` | `0.0.0.0` (the shipped value) serves every interface, `127.0.0.1` only this machine. See [Security](#security). |
 | `limits.max_sessions` | A hard gate. Over it, the server returns `server_busy` immediately rather than queueing behind a decoder that cannot catch up. |
 | `logging.store_audio` / `store_transcript` | Both `false`, and they should stay that way. See below. |
+
+### Every setting
+
+The file has six sections and nothing else. An unknown section, or an unknown
+key inside one, is a startup error rather than a shrug — which matters most for
+`logging.store_audio`, where a misspelling would look like it had been set.
+
+Defaults below are the code's own fallbacks. The shipped configs set most of
+them explicitly, and the installer rewrites every path in them to point inside
+the prefix it installed to.
+
+#### `server`
+
+| Key | Default | Accepts | What it does |
+| --- | --- | --- | --- |
+| `host` | `0.0.0.0` | any local address | `0.0.0.0` serves every interface, `127.0.0.1` only this machine. See [Security](#security) before opening it. |
+| `port` | `8765` | 1–65535 | The two languages must differ; the shipped English config uses `8766`. |
+| `instance_name` | `local-dictation` | any string | Reported to clients in the `ready` event; the shipped configs name the language. Worth setting when several hosts serve one language behind a single address. |
+
+#### `model`
+
+Everything here is handed to faster-whisper unchanged.
+
+| Key | Default | Accepts | What it does |
+| --- | --- | --- | --- |
+| `path` | `<prefix>/models/large-v3-turbo` | a directory holding `model.bin` | A CTranslate2 conversion, never a HuggingFace repo id: the server makes no outbound requests. `check` opens it. |
+| `device` | `cpu` | `cpu`, `cuda`, `auto` | `cuda` needs a CTranslate2 built with it and a GPU conversion of the model. Everything in these documents is measured on `cpu`. |
+| `compute_type` | `int8` | on CPU: `int8`, `int8_float32`, `float32` | Ask your own build rather than guessing: `python -c "import ctranslate2; print(ctranslate2.get_supported_compute_types('cpu'))"`. `int8` is what the latency budget assumes. |
+| `language` | `ko` | `ko`, `en` | There is no auto-detection. Each server transcribes one language, which is what makes a swapped port a detectable mistake rather than fluent nonsense. |
+| `beam_size` | `1` | ≥ 1 | `1` is greedy. Beam search roughly doubles wall-clock for an accuracy gain dictation — where the text is appearing as you watch — does not benefit from. |
+| `temperature` | `0.0` | a float | `0.0` is deterministic. Above it the decoder samples, which on hard audio means invented words rather than a worse guess. |
+| `cpu_threads` | `0` | `0` = let CTranslate2 choose | Pin it to the physical core count after running the benchmark below; hyperthreads make INT8 slower. Also sets `OMP_NUM_THREADS`. |
+| `num_workers` | `1` | ≥ 1 | Raising it buys nothing here: CTranslate2 models are not safe to call concurrently, so the server serialises decodes behind a lock and `limits.max_sessions` keeps the queue short. |
+| `draft_path` | `null` | a directory, or `null` | A small model (`base`) used **only** for live partial text. The single biggest latency change available: first partial goes from about 3.7 s to about 0.9 s. Nothing it produces is committed — the accurate model decodes the utterance once at the end, and that is the text you keep. See [latency.md](latency.md). |
+| `initial_prompt` | `null` | a short string, or `null` | Vocabulary hint prepended to every decode: names, product terms, jargon. Keep it under ~200 characters — it is charged against the context window on every pass. |
+| `condition_on_previous_text` | `false` | `true` / `false` | `true` feeds already-decoded text back as context. Off by default because this server prefers latency: it costs an extra prompt on every pass, and it lets one bad decode influence everything after it. |
+
+#### `streaming`
+
+| Key | Default | Accepts | What it does |
+| --- | --- | --- | --- |
+| `chunk_ms` | `600` | ≥ 100 | How much new audio to gather before the next decode pass. Lower is snappier and costs proportionally more CPU. |
+| `silence_ms` | `600` | ≥ 100 | Trailing silence that ends an utterance. Raise it in a noisy room, or if you pause mid-sentence to think. |
+| `max_utterance_seconds` | `120` | ≥ 5 | Hard cap. The utterance is force-finalized and the client gets a non-fatal error. |
+| `max_window_seconds` | `12.0` | ≥ 3, and ≤ `max_utterance_seconds` | The longest stretch one decode pass may cover. Past it, audio whose text is already committed is dropped and carried forward as a prompt — this is what keeps cost per pass flat however long someone talks. |
+| `agreement_window` | `2` | ≥ 2 | How many consecutive hypotheses must agree before a prefix is committed. `2` is LocalAgreement-2; `3` commits less and shows text later. |
+| `vad` | `silero` | `silero`, `energy`, `none` | `silero` is a speech model and the only one that holds up in a noisy room. `energy` is a plain RMS threshold. `none` treats everything as speech, so utterances end only when you stop or the cap fires. |
+| `energy_threshold` | `0.006` | RMS, `0.0`–`1.0` | Only read by the energy detector. |
+| `silero_model_path` | `<prefix>/models/silero_vad.onnx` | a path, or `null` | Required when `vad` is `silero`. If the file is missing at startup the server logs a warning and falls back to the energy detector rather than refusing to serve — `check` reports this as a warning, not a failure. |
+
+#### `security`
+
+All four are `null`/`false` in the shipped configs. [Security](#security) has the
+reasoning and the alternatives.
+
+| Key | Default | Accepts | What it does |
+| --- | --- | --- | --- |
+| `tls_certificate` | `null` | a PEM path | Serves `wss://` instead of `ws://`. Must be set together with the key. |
+| `tls_private_key` | `null` | a PEM path | |
+| `client_ca` | `null` | a CA bundle path | Verifies client certificates against this. |
+| `require_client_certificate` | `false` | `true` / `false` | Refuses a client that presents no certificate signed by `client_ca`. **This is the only access control the server has** — there is no token and no password. |
+
+#### `limits`
+
+| Key | Default | Accepts | What it does |
+| --- | --- | --- | --- |
+| `max_sessions` | `2` | ≥ 1 | Concurrent sessions. Over it the server answers `server_busy` immediately rather than queueing behind a decoder that cannot catch up. Counted per language server — see [Capacity](#capacity). |
+| `max_audio_frame_bytes` | `65536` | ≥ 640 | Largest audio frame a client may send; a bigger one is answered with `audio_format_invalid`. 640 bytes is one 20 ms frame at 16 kHz mono, and the WebSocket's own frame ceiling is set to twice this. |
+| `idle_timeout_seconds` | `60` | seconds | Closes a session that has sent no audio for this long, with `session_timeout`. |
+| `handshake_timeout_seconds` | `10` | seconds | Refuses a connection whose `start` message takes longer than this to arrive. |
+
+#### `logging`
+
+| Key | Default | Accepts | What it does |
+| --- | --- | --- | --- |
+| `level` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | `DEBUG` is loud and worth it while diagnosing segmentation. |
+| `json` | `true` | `true` / `false` | One JSON object per line, or human-readable lines. `false` is easier to read in a terminal. |
+| `store_audio` | `false` | `true` / `false` | See [Retention](#retention). |
+| `store_transcript` | `false` | `true` / `false` | See [Retention](#retention). |
+
+### What the server refuses to start with
+
+`check` runs the same validation the server does, so these are messages before a
+restart rather than a process that exits four seconds after `start` said it was
+up:
+
+- `model.language` that is not `ko` or `en`; `server.port` outside 1–65535
+- `chunk_ms` or `silence_ms` below 100 — the first wastes CPU on redundant
+  decodes, the second chops utterances mid-word
+- `agreement_window` below 2, `max_utterance_seconds` below 5,
+  `max_window_seconds` below 3 or above `max_utterance_seconds`
+- `max_sessions` below 1, `max_audio_frame_bytes` below one 20 ms frame
+- `vad: silero` with no `silero_model_path`
+- **A half-configured TLS pair.** Certificate without key, or the reverse;
+  `require_client_certificate` without a `client_ca`; either of those without a
+  certificate. All-or-nothing on purpose — a listener that looks encrypted and
+  is not is worse than a plain one.
+
+Beyond those, `check` also opens every file the config names, which
+`--check-config` deliberately does not — see [Everyday commands](#everyday-commands).
 
 ## Capacity
 
