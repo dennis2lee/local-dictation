@@ -4,7 +4,8 @@
 #
 #   ./fetch-model.sh                        # large-v3      into the default dir
 #   ./fetch-model.sh large-v3-turbo         # turbo         into the default dir
-#   ./fetch-model.sh all --dest ./models    # both + VAD, into ./models
+#   ./fetch-model.sh base                   # draft model, for live partials
+#   ./fetch-model.sh all --dest ./models    # all three + VAD, into ./models
 #   ./fetch-model.sh --list                 # show sizes, download nothing
 #   ./fetch-model.sh --verify --dest ./models
 #
@@ -40,6 +41,11 @@ HF_ENDPOINT="${HF_ENDPOINT:-https://huggingface.co}"
 # directly. The plain openai/* repos are PyTorch and will not work here.
 REPO_LARGE_V3="Systran/faster-whisper-large-v3"
 REPO_LARGE_V3_TURBO="deepdml/faster-whisper-large-v3-turbo-ct2"
+# The draft model. It transcribes nothing anyone keeps — it exists to put text
+# on screen in under a second while the accurate model above decodes the
+# utterance once at the end. 140 MB against 1.5 GB, and the single largest
+# latency change this server has. See model.draft_path in docs/server-usage.md.
+REPO_BASE="Systran/faster-whisper-base"
 SILERO_URL="https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
 
 # The file set differs between conversions: the large-v3 repos carry
@@ -106,7 +112,8 @@ repo_for() {
   case "$1" in
     large-v3)       printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3}" ;;
     large-v3-turbo) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO}" ;;
-    *) die "unknown model '$1' (expected: large-v3, large-v3-turbo, vad or all)" ;;
+    base)           printf '%s' "${REPO_OVERRIDE:-$REPO_BASE}" ;;
+    *) die "unknown model '$1' (expected: large-v3, large-v3-turbo, base, vad or all)" ;;
   esac
 }
 
@@ -191,7 +198,7 @@ verify() {
 
 list_sizes() {
   local total=0
-  for model in large-v3 large-v3-turbo; do
+  for model in large-v3 large-v3-turbo base; do
     local repo; repo="$(repo_for "$model")"
     printf '%-16s %s\n' "$model" "$repo"
     local files=()
@@ -205,12 +212,12 @@ list_sizes() {
   local vad; vad="$(remote_size "$SILERO_URL")"
   printf '%-16s %s\n  %-28s %10s\n' "vad" "silero-vad" "silero_vad.onnx" "$(human "$vad")"
   [[ "$vad" =~ ^[0-9]+$ ]] && total=$((total + vad))
-  printf '\n%-16s %10s  (both models + VAD)\n' "total" "$(human "$total")"
+  printf '\n%-16s %10s  (every model + VAD)\n' "total" "$(human "$total")"
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    large-v3|large-v3-turbo|vad|all) MODEL="$1" ;;
+    large-v3|large-v3-turbo|base|vad|all) MODEL="$1" ;;
     --dest)          DEST="${2:?--dest needs a directory}"; shift ;;
     --repo)          REPO_OVERRIDE="${2:?--repo needs an id}"; shift ;;
     --metadata-only) METADATA_ONLY=1 ;;
@@ -231,13 +238,24 @@ if [[ "$VERIFY_ONLY" == "1" ]]; then verify; exit 0; fi
 mkdir -p "$DEST"
 case "$MODEL" in
   vad) fetch_vad ;;
-  all) fetch_model large-v3; fetch_model large-v3-turbo; fetch_vad ;;
+  all) fetch_model large-v3; fetch_model large-v3-turbo; fetch_model base; fetch_vad ;;
   *)   fetch_model "$MODEL"; fetch_vad ;;
 esac
 
 info ""
 info "installed under $DEST"
-if [[ "$MODEL" != "vad" ]]; then
+# base is a draft model: it produces the live partial text and nothing that is
+# kept, so it belongs on draft_path. Naming it as model.path would quietly
+# downgrade every transcript the server commits.
+if [[ "$MODEL" == "base" ]]; then
+  info ""
+  info "base is a draft model — it belongs on draft_path, not model.path:"
+  info "  model.draft_path:               $DEST/base"
+  info ""
+  info "Leave model.path pointing at the accurate model. The draft one only"
+  info "writes the partial text you watch appear; what you keep is decoded"
+  info "once, at the end, by the model above it."
+elif [[ "$MODEL" != "vad" ]]; then
   info ""
   info "put these two lines in your server config:"
   info "  model.path:                     $DEST/${MODEL/all/large-v3}"

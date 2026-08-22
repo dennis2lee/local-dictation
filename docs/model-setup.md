@@ -33,6 +33,32 @@ local-dictation-server health all      # first_partial_p95 and rtf_p95 live here
 Keep the real-time factor (`rtf_p95`) under 1.0. Above it, the decoder is falling
 behind the microphone and no amount of tuning elsewhere will fix the latency.
 
+### And one more: `base`, the draft model
+
+140 MB, and on CPU it is worth more than the choice above.
+
+Whisper's encoder processes a padded 30-second window whatever you give it, so
+a decode pass costs the same for three seconds of speech as for ten. That fixed
+cost is the floor on how quickly partial text can appear, and for
+`large-v3-turbo` on a laptop it is several seconds — well past the two the plan
+budgets. `base` runs the same pass in a fraction of it.
+
+Set as `model.draft_path`, it writes **only the live partial text**. Nothing it
+produces is committed: when you stop, the accurate model decodes the utterance
+once and that is the text you keep. So this buys latency without spending
+accuracy, which almost nothing else here does.
+
+Measured on a MacBook Air M5, Korean, five clips:
+
+| | first partial p50 | finalization p50 | CER |
+|---|---|---|---|
+| `large-v3-turbo` alone | 4.85 s | 7.47 s | 5.3% |
+| with `base` as the draft | **0.92 s** | **4.58 s** | 5.3% |
+
+Identical accuracy, first partial five times sooner. Get it with
+`./fetch-model.sh base`, and see `model.draft_path` in
+[server-usage.md](server-usage.md#every-setting).
+
 ## Linux and macOS
 
 `$PREFIX` below is wherever you installed the server: `~/local-dictation` by
@@ -115,12 +141,14 @@ English model, only a Korean *process* and an English *process*.
 ```yaml
 model:
   path: "<prefix>/models/large-v3-turbo"
+  draft_path: "<prefix>/models/base"      # optional, and the biggest win on CPU
 streaming:
   silero_model_path: "<prefix>/models/silero_vad.onnx"
 ```
 
-The installer writes both of these for the prefix you chose, so this is what to
-check rather than what to type. Apply any change to both files and restart:
+The installer writes the first and last of these for the prefix you chose, so
+those are what to check rather than what to type. `draft_path` starts empty and
+is yours to add. Apply any change to both files and restart:
 
 ```bash
 local-dictation-server restart all && local-dictation-server health all
@@ -148,6 +176,7 @@ A file that fails here is corrupt or truncated; re-run the download with
 
 Whisper weights are released by OpenAI under the MIT licence. The CTranslate2
 conversions used here are redistributions of those weights: `large-v3` from
-`Systran/faster-whisper-large-v3` and `large-v3-turbo` from
-`deepdml/faster-whisper-large-v3-turbo-ct2`. Silero VAD is MIT licensed. Check
+`Systran/faster-whisper-large-v3`, `large-v3-turbo` from
+`deepdml/faster-whisper-large-v3-turbo-ct2`, and `base` from
+`Systran/faster-whisper-base`. Silero VAD is MIT licensed. Check
 each repository's card before redistributing anything internally.
