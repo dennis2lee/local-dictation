@@ -25,7 +25,7 @@ import (
 // version is stamped at build time:
 //
 //	go build -ldflags "-X main.version=0.2.0"
-var version = "0.1.16"
+var version = "0.1.17"
 
 func main() {
 	var (
