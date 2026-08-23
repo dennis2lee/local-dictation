@@ -160,19 +160,23 @@ If dictation lags behind your voice, this is the setting.
 
 ### Updates
 
-Shows the installed version. **Check for updates** looks for a newer one, and
-the line above the button says where it will look before you press it.
+Shows the installed version. **Update** does the whole thing: it looks for a
+newer release, and if there is one it downloads it, installs it, and reopens
+the app. There is nothing to confirm in between — pressing the button is the
+decision. If you are already on the newest release it says so and stops.
 
-By default that is this project's own releases on github.com. When a newer one
-exists, the version and a link to its notes appear, along with **Download and
-install**, showing how large it is.
+The line above the button says where it will look before you press it. By
+default that is this project's own releases on github.com.
 
-Pressing it downloads the installer, checks it, and hands it to the operating
-system's own installer — Installer.app on macOS, `msiexec` on Windows. Both ask
-for administrator authorisation themselves, in their own window; Local
-Dictation never sees a password. It then closes, because the application it is
-running from is exactly what is being replaced, and reopens once the install
-finishes.
+The download is handed to the operating system's own installer — Installer.app
+on macOS, `msiexec` on Windows. Both ask for administrator authorisation
+themselves, in their own window; Local Dictation never sees a password. It then
+closes, because the application it is running from is exactly what is being
+replaced, and reopens once the install finishes.
+
+**update.check_on_start** only checks. It reports what it found and waits for
+you to press **Update** — updating and restarting because someone opened the
+app would be a different setting, and one nobody turned on.
 
 If the installer will not start, the message says so and the downloaded file is
 still in your `Downloads` folder — opening it by hand is the same install.

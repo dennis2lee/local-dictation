@@ -72,9 +72,8 @@ type settingsTab struct {
 	livePreview    *widget.Check
 
 	// Update
-	updateStatus   *widget.Label
-	updateButton   *widget.Button
-	downloadButton *widget.Button
+	updateStatus *widget.Label
+	updateButton *widget.Button
 	// offered is the last check's result, which the download button acts on.
 	// Both live on the Fyne goroutine and nothing else reads it.
 	offered update.Result
@@ -87,6 +86,11 @@ type settingsTab struct {
 	// it, and enumerating real capture devices in a test asks macOS for the
 	// microphone — which is a permission prompt during go test.
 	listDevices func() ([]audio.Device, error)
+	// And the two ends of the update itself. One press now runs the whole
+	// thing, so testing that it does means standing in for the parts that
+	// reach the network and replace the running application.
+	fetch func(context.Context, update.Artifact) (string, error)
+	apply func(saved, version string)
 
 	saveButton *widget.Button
 	message    *widget.Label
@@ -524,17 +528,19 @@ func (s *settingsTab) buildUpdateSection(settings config.Config) fyne.CanvasObje
 		"Not checked yet. Updates come from %s.", s.updateSource(settings).Describe()))
 	s.updateStatus.Wrapping = fyne.TextWrapWord
 
-	s.updateButton = widget.NewButtonWithIcon("Check for updates", theme.SearchIcon(), s.onCheckUpdate)
-	// Nothing to download until a check finds something, and a button that is
-	// there but does nothing is worse than one that appears when it applies.
-	s.downloadButton = primaryButton(
-		widget.NewButtonWithIcon("Download and install", theme.DownloadIcon(), s.onDownloadUpdate))
-	s.downloadButton.Hide()
+	// One button for the whole thing: check, download, install, reopen.
+	//
+	// It used to take two — one to look, one to accept what was found — which
+	// meant an update someone had already decided to install still waited on a
+	// second press. The button says what it does, so pressing it is the
+	// decision; there is no second one to make.
+	s.updateButton = primaryButton(
+		widget.NewButtonWithIcon("Update", theme.DownloadIcon(), s.onUpdate))
 
 	return container.NewVBox(
 		widget.NewLabel(fmt.Sprintf("Local Dictation %s", s.app.options.Version)),
 		s.updateStatus,
-		container.NewHBox(s.updateButton, s.downloadButton),
+		container.NewHBox(s.updateButton),
 	)
 }
 
@@ -556,11 +562,31 @@ func (s *settingsTab) updateSource(settings config.Config) update.Source {
 	)
 }
 
-func (s *settingsTab) onCheckUpdate() {
+// onUpdate takes the app from "is there a newer one" to running it. It is what
+// the Update button does.
+//
+// Every step reports what it is doing, because the last one closes the window:
+// an application that quits without having said why has gone wrong as far as
+// anyone watching is concerned.
+func (s *settingsTab) onUpdate() { s.lookForUpdate(installIfNewer) }
+
+// checkOnStart is the same check without the install.
+//
+// update.check_on_start says check, and that is all it may do. Installing a
+// new version and restarting because someone opened the app would be a
+// different setting, one nobody turned on.
+func (s *settingsTab) checkOnStart() { s.lookForUpdate(reportOnly) }
+
+// What lookForUpdate does when it finds a newer release.
+const (
+	installIfNewer = true
+	reportOnly     = false
+)
+
+func (s *settingsTab) lookForUpdate(install bool) {
 	source := s.updateSource(s.app.Settings())
 	s.updateStatus.SetText(fmt.Sprintf("Asking %s…", source.Describe()))
 	s.updateButton.Disable()
-	s.downloadButton.Hide()
 
 	s.away(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -568,57 +594,63 @@ func (s *settingsTab) onCheckUpdate() {
 		result, err := source.Check(ctx)
 
 		fyne.Do(func() {
-			s.updateButton.Enable()
 			s.offered = result
 			switch {
 			case err != nil:
+				s.updateButton.Enable()
 				s.updateStatus.SetText(fmt.Sprintf("Update check failed: %v", err))
-			case result.Newer:
-				s.updateStatus.SetText(offerText(result))
-				s.downloadButton.SetText(fmt.Sprintf("Download and install (%s)", humanSize(result.Artifact.Size)))
-				s.downloadButton.Show()
-			default:
+			case !result.Newer:
+				s.updateButton.Enable()
 				s.updateStatus.SetText(fmt.Sprintf(
 					"Local Dictation %s is the newest release.", result.Current))
+			case !install:
+				s.updateButton.Enable()
+				s.updateStatus.SetText(offerText(result) + "\nPress Update to install it.")
+			default:
+				s.downloadAndInstall(result)
 			}
 		})
 	})
 }
 
-// onDownloadUpdate fetches the installer and stops. Running it is the user's
-// own act: this application does not hand itself to an installer, and on both
-// platforms installing wants a window the user is looking at anyway.
-func (s *settingsTab) onDownloadUpdate() {
-	offered := s.offered
-	s.updateButton.Disable()
-	s.downloadButton.Disable()
-	s.updateStatus.SetText(fmt.Sprintf("Downloading %s…", installerName(offered.Artifact.URL)))
+// downloadAndInstall fetches the offered artifact and hands it to the platform
+// installer. The button stays disabled throughout: there is nothing else to
+// press, and the process is about to end.
+func (s *settingsTab) downloadAndInstall(offered update.Result) {
+	s.updateStatus.SetText(fmt.Sprintf("%s\nDownloading %s…",
+		offerText(offered), humanSize(offered.Artifact.Size)))
 
 	s.away(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		saved, err := update.Download(ctx, offered.Artifact, downloadDir(s.app.options.StateDir), nil)
+		saved, err := s.fetchArtifact(ctx, offered.Artifact)
 
 		fyne.Do(func() {
-			s.updateButton.Enable()
 			if err != nil {
-				s.downloadButton.Enable()
+				s.updateButton.Enable()
 				s.updateStatus.SetText(fmt.Sprintf("Download failed: %v", err))
 				return
 			}
-			s.downloadButton.Hide()
-			s.installDownloaded(saved, offered.Available)
+			s.applyDownload(saved, offered.Available)
 		})
 	})
 }
 
-// installDownloaded hands the verified file to the platform installer, then
-// closes the application so it can be replaced.
-//
-// The quit is not optional and not a tidy-up: on both platforms the bundle
-// this process is executing from is exactly what the installer overwrites. A
-// second process, started first, waits for the installer to finish and opens
-// the app again — see update.Install.
+func (s *settingsTab) fetchArtifact(ctx context.Context, artifact update.Artifact) (string, error) {
+	if s.fetch != nil {
+		return s.fetch(ctx, artifact)
+	}
+	return update.Download(ctx, artifact, downloadDir(s.app.options.StateDir), nil)
+}
+
+func (s *settingsTab) applyDownload(saved, version string) {
+	if s.apply != nil {
+		s.apply(saved, version)
+		return
+	}
+	s.installDownloaded(saved, version)
+}
+
 func (s *settingsTab) installDownloaded(saved, version string) {
 	if err := update.Install(saved, applicationPath()); err != nil {
 		// Nothing has been lost: the file is downloaded and verified, and
@@ -626,8 +658,7 @@ func (s *settingsTab) installDownloaded(saved, version string) {
 		s.updateStatus.SetText(fmt.Sprintf(
 			"Downloaded %s, but the installer would not start: %v\n"+
 				"Open %s yourself to finish.", version, err, saved))
-		s.downloadButton.Show()
-		s.downloadButton.Enable()
+		s.updateButton.Enable()
 		return
 	}
 	s.updateStatus.SetText(fmt.Sprintf(

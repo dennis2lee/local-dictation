@@ -68,15 +68,25 @@ func TestAForkCanPointChecksAtItsOwnReleases(t *testing.T) {
 	}
 }
 
-// There is nothing to download before a check has found something.
-func TestTheDownloadButtonWaitsForACheck(t *testing.T) {
+// One button, and it is pressable before anything has been checked.
+//
+// There used to be two: one to look and one to accept what was found, so an
+// update someone had already decided to install still waited on a second
+// press.
+func TestTheUpdateSectionOffersOneButton(t *testing.T) {
 	settings := testSettings()
 	tab := &settingsTab{app: appAtVersion(settings, "0.1.10")}
 
 	tab.buildUpdateSection(settings)
 
-	if tab.downloadButton.Visible() {
-		t.Error("a download button is offered before anything has been found")
+	if tab.updateButton == nil || !tab.updateButton.Visible() {
+		t.Fatal("there is no Update button")
+	}
+	if tab.updateButton.Disabled() {
+		t.Error("the Update button starts out unpressable")
+	}
+	if tab.updateButton.Text != "Update" {
+		t.Errorf("the button reads %q; it does the whole update, so it should say so", tab.updateButton.Text)
 	}
 }
 
@@ -164,46 +174,84 @@ func checkedTab(t *testing.T, source update.Source) *settingsTab {
 	return tab
 }
 
-func TestANewerReleaseIsOfferedAsADownload(t *testing.T) {
-	tab := checkedTab(t, &stubSource{result: update.Result{
-		Current:   "0.1.10",
-		Available: "0.2.0",
-		Newer:     true,
-		Page:      "https://github.com/dennis2lee/local-dictation/releases/tag/v0.2.0",
-		Artifact: update.Artifact{
-			URL:    "https://github.com/o/r/releases/download/v0.2.0/LocalDictation-0.2.0.pkg",
-			SHA256: "abc",
-			Size:   25_341_952,
-		},
-	}})
+// The whole point of the change: one press goes from "is there a newer one" to
+// installing it, with nothing to accept in between.
+func TestOnePressChecksDownloadsAndInstalls(t *testing.T) {
+	tab := checkedTab(t, &stubSource{result: newerRelease})
 
-	tab.onCheckUpdate()
-
-	if !tab.downloadButton.Visible() {
-		t.Fatal("a newer release was found and no download was offered")
+	var fetched update.Artifact
+	var installed, installedVersion string
+	tab.fetch = func(_ context.Context, artifact update.Artifact) (string, error) {
+		fetched = artifact
+		return "/tmp/LocalDictation-0.2.0.pkg", nil
 	}
-	if !strings.Contains(tab.downloadButton.Text, "24.2 MB") {
-		t.Errorf("download button reads %q, want the size in it", tab.downloadButton.Text)
+	tab.apply = func(saved, version string) { installed, installedVersion = saved, version }
+
+	tab.onUpdate()
+
+	if fetched.URL != newerRelease.Artifact.URL {
+		t.Errorf("downloaded %q, want the offered artifact", fetched.URL)
+	}
+	if installed == "" {
+		t.Fatal("the download was never handed to the installer")
+	}
+	if installedVersion != "0.2.0" {
+		t.Errorf("installed version reported as %q", installedVersion)
 	}
 	if !strings.Contains(tab.updateStatus.Text, "0.2.0") {
 		t.Errorf("status reads %q, want the new version named", tab.updateStatus.Text)
 	}
-	if tab.updateButton.Disabled() {
-		t.Error("the check button was left disabled after the check finished")
-	}
 }
 
-func TestAnUpToDateClientIsToldSo(t *testing.T) {
+func TestAnUpToDateClientIsToldSoAndNothingIsInstalled(t *testing.T) {
 	tab := checkedTab(t, &stubSource{result: update.Result{Current: "0.1.10"}})
-
-	tab.onCheckUpdate()
-
-	if tab.downloadButton.Visible() {
-		t.Error("a download was offered for a version already installed")
+	tab.fetch = func(context.Context, update.Artifact) (string, error) {
+		t.Error("a download was started for a version already installed")
+		return "", nil
 	}
+
+	tab.onUpdate()
+
 	if !strings.Contains(tab.updateStatus.Text, "newest") {
 		t.Errorf("status reads %q", tab.updateStatus.Text)
 	}
+	if tab.updateButton.Disabled() {
+		t.Error("the button was left disabled after finding nothing to do")
+	}
+}
+
+// update.check_on_start says check. Installing a new version and restarting
+// because someone opened the app is a different thing, which nobody enabled.
+func TestTheStartupCheckReportsButDoesNotInstall(t *testing.T) {
+	tab := checkedTab(t, &stubSource{result: newerRelease})
+	tab.fetch = func(context.Context, update.Artifact) (string, error) {
+		t.Error("the startup check installed an update on its own")
+		return "", nil
+	}
+
+	tab.checkOnStart()
+
+	if !strings.Contains(tab.updateStatus.Text, "0.2.0") {
+		t.Errorf("status reads %q, want the available version named", tab.updateStatus.Text)
+	}
+	if !strings.Contains(tab.updateStatus.Text, "Update") {
+		t.Errorf("status reads %q, want it to say how to install", tab.updateStatus.Text)
+	}
+	if tab.updateButton.Disabled() {
+		t.Error("the button is unpressable, so the update it just found cannot be taken")
+	}
+}
+
+var newerRelease = update.Result{
+	Current:   "0.1.10",
+	Available: "0.2.0",
+	Newer:     true,
+	Page:      "https://github.com/dennis2lee/local-dictation/releases/tag/v0.2.0",
+	Artifact: update.Artifact{
+		URL:    "https://github.com/o/r/releases/download/v0.2.0/LocalDictation-0.2.0.pkg",
+		SHA256: "abc",
+		Size:   25_341_952,
+	},
 }
 
 // A check that cannot reach anywhere must leave the button pressable — the
@@ -211,7 +259,7 @@ func TestAnUpToDateClientIsToldSo(t *testing.T) {
 func TestAFailedCheckSaysWhyAndCanBeRetried(t *testing.T) {
 	tab := checkedTab(t, &stubSource{err: update.ErrRateLimited})
 
-	tab.onCheckUpdate()
+	tab.onUpdate()
 
 	if tab.updateButton.Disabled() {
 		t.Error("a failed check left the button disabled, so it cannot be retried")

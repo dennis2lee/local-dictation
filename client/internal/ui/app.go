@@ -188,7 +188,7 @@ func (a *App) checkForUpdatesOnStart() {
 	if !a.Settings().Update.CheckOnStart {
 		return
 	}
-	fyne.Do(a.settingsTab.onCheckUpdate)
+	fyne.Do(a.settingsTab.checkOnStart)
 }
 
 // Quit tears everything down in the order that loses the least text.
