@@ -30,12 +30,15 @@ func panel(content fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewStack(background, container.NewPadded(content))
 }
 
-// sectionHeading is the small bold label above each group in Settings —
-// "Servers", "Microphone", "Software update".
-func sectionHeading(text string) *widget.Label {
-	label := widget.NewLabelWithStyle(text, fyne.TextAlignLeading, fyne.TextStyle{Bold: true})
-	label.SizeName = theme.SizeNameSubHeadingText
-	return label
+// group is one tab's worth of settings: inset from the frame, and scrollable
+// so that a group taller than the window is still reachable rather than cut
+// off. The inset is inside the scroll so fields clear the scroll bar instead
+// of sliding under it.
+//
+// There is no heading inside a group. The tab that selects it is the heading,
+// and repeating the word underneath it was 35px of saying so twice.
+func group(content fyne.CanvasObject) fyne.CanvasObject {
+	return container.NewVScroll(inset(content))
 }
 
 // caption is the muted explanatory line under a control.

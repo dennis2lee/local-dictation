@@ -72,9 +72,9 @@ mv /opt/local-dictation/models/large-v3 /opt/local-dictation/models/base
 `base` is 145 MB and adds roughly 200 MB of resident memory.
 
 In standalone mode the same thing is one field in the app: put the small
-model's directory in **Settings → Draft model directory** and save. The client
-passes it through to the server it starts, and **Test connections** confirms it
-with "drafting with …".
+model's directory in **Settings → Local server → Draft model directory** and
+save. The client passes it through to the server it starts, and **Test
+connections** confirms it with "drafting with …".
 
 One caveat for very long utterances: the decode window is capped (12 s by
 default, `streaming.max_window_seconds`). When one utterance outgrows it, the

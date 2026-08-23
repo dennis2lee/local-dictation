@@ -83,10 +83,15 @@ type settingsTab struct {
 	// a background goroutine's answer is a test that races with it.
 	newSource  func(config.Config) update.Source
 	background func(func())
+	// A third, for the same reason: measuring this tab means building all of
+	// it, and enumerating real capture devices in a test asks macOS for the
+	// microphone — which is a permission prompt during go test.
+	listDevices func() ([]audio.Device, error)
 
 	saveButton *widget.Button
 	message    *widget.Label
-	body       fyne.CanvasObject
+	groups     *container.AppTabs
+	actions    fyne.CanvasObject
 }
 
 func newSettingsTab(app *App) *settingsTab {
@@ -95,28 +100,34 @@ func newSettingsTab(app *App) *settingsTab {
 
 	tab.message = widget.NewLabel("")
 	tab.message.Wrapping = fyne.TextWrapWord
+	// Nothing to say yet, and a blank line still occupies its height. See say.
+	tab.message.Hide()
 
-	tab.body = container.NewVBox(
-		tab.buildServerSection(settings),
-		widget.NewSeparator(),
-		tab.buildMicrophoneSection(settings),
-		widget.NewSeparator(),
-		tab.buildShortcutSection(settings),
-		widget.NewSeparator(),
-		tab.buildUpdateSection(settings),
-		widget.NewSeparator(),
-		tab.buildActions(),
-		tab.message,
+	// One group per tab, rather than one column with all of them in it.
+	//
+	// Stacked, these came to about 1335px — more than twice the window, so
+	// every setting sat behind a scroll past every other setting, and the
+	// window had to be tall to make that bearable. Split, the tallest group is
+	// around a third of that, and the window is sized to the tallest group
+	// instead of to the sum.
+	tab.groups = container.NewAppTabs(
+		container.NewTabItem("Server", group(tab.buildServerSection(settings))),
+		container.NewTabItem("Local server", group(tab.buildLocalServerSection(settings))),
+		container.NewTabItem("Advanced", group(tab.buildAdvancedSection(settings))),
+		container.NewTabItem("Microphone", group(tab.buildMicrophoneSection(settings))),
+		container.NewTabItem("Typing", group(tab.buildShortcutSection(settings))),
+		container.NewTabItem("Updates", group(tab.buildUpdateSection(settings))),
 	)
-	tab.onModeChanged(modeLabel(settings.Mode))
+	tab.actions = tab.buildActions()
 	return tab
 }
 
 func (s *settingsTab) content() fyne.CanvasObject {
-	// The inset is inside the scroll, not around it, so the fields clear the
-	// scroll bar rather than sliding under it when the tab is long enough to
-	// scroll — which this one always is.
-	return container.NewVScroll(inset(s.body))
+	// Save sits below the groups rather than inside one, because it saves all
+	// of them at once. On a single group it would look like it saved that
+	// group, and it would scroll out of reach of the others.
+	footer := inset(container.NewVBox(s.actions, s.message))
+	return container.NewBorder(nil, footer, nil, nil, s.groups)
 }
 
 // -- servers ---------------------------------------------------------------
@@ -162,6 +173,36 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 	s.onTLSChanged(s.useTLS.Checked)
 	s.useTLS.OnChanged = s.onTLSChanged
 
+	s.koreanLED = newLED("Korean: not checked")
+	s.englishLED = newLED("English: not checked")
+
+	// Attached after remoteBox exists, and it is the only box this toggles
+	// now: the local server's fields have a tab of their own, so there is
+	// nothing to hide there.
+	s.onModeChanged(s.mode.Selected)
+	s.mode.OnChanged = s.onModeChanged
+
+	// Test connections shares the mode's row rather than taking one of its
+	// own. It is the only row on this tab whose width is known and fixed —
+	// two radio labels — so nothing here can grow into the button, and the
+	// row it saves is what kept this tab from fitting the window.
+	test := primaryButton(
+		widget.NewButtonWithIcon("Test connections", theme.ViewRefreshIcon(), s.onTestConnections))
+
+	return container.NewVBox(
+		container.NewBorder(nil, nil, s.mode, test),
+		s.remoteBox,
+		s.koreanLED.Object(),
+		s.englishLED.Object(),
+	)
+}
+
+// -- the built-in server ---------------------------------------------------
+
+// buildLocalServerSection is everything about the server this app starts for
+// itself. It was the tallest thing in Settings by some way — seven fields and
+// two paragraphs — which is most of why the window had to be as tall as it was.
+func (s *settingsTab) buildLocalServerSection(settings config.Config) fyne.CanvasObject {
 	s.modelPath = entry(settings.Local.ModelPath, config.DefaultModelPath())
 	s.draftPath = entry(settings.Local.DraftModelPath,
 		"optional: a small model (base) for sub-second partials")
@@ -181,32 +222,37 @@ func (s *settingsTab) buildServerSection(settings config.Config) fyne.CanvasObje
 			widget.NewFormItem("Model directory", s.modelPath),
 			widget.NewFormItem("Draft model directory", s.draftPath),
 			widget.NewFormItem("Silero VAD file", s.vadPath),
-			widget.NewFormItem("Python", s.pythonPath),
-			widget.NewFormItem("CPU threads", s.cpuThreads),
-			widget.NewFormItem("Korean port", s.localKoreanPort),
-			widget.NewFormItem("English port", s.localEnglishPort),
 		),
 		widget.NewLabel("Models are not installed with the app. See docs/model-setup.md."),
 		s.localState,
 	)
 
-	// Both boxes exist now, so the mode can decide which of them is visible and
-	// the handler is safe to attach.
-	s.onModeChanged(s.mode.Selected)
-	s.mode.OnChanged = s.onModeChanged
-
-	s.koreanLED = newLED("Korean: not checked")
-	s.englishLED = newLED("English: not checked")
-
+	// These used to be hidden outright in Remote mode. On their own tab that
+	// would leave a blank one, so they stay and say when they apply — which
+	// also lets someone set the built-in server up before switching to it.
 	return container.NewVBox(
-		sectionHeading("Servers"),
-		s.mode,
-		s.remoteBox,
+		inlineCaption("Used when Server is set to \"This computer\"."),
 		s.localBox,
-		s.koreanLED.Object(),
-		s.englishLED.Object(),
-		container.NewHBox(
-			primaryButton(widget.NewButtonWithIcon("Test connections", theme.ViewRefreshIcon(), s.onTestConnections)),
+	)
+}
+
+// -- the built-in server, the parts nobody touches -------------------------
+
+// buildAdvancedSection is the rest of the local server: which Python runs it,
+// how many threads it decodes on, and which ports it listens on.
+//
+// They are separated from the model paths because they are answered by their
+// defaults. Someone setting this up needs the model directory and nothing on
+// this tab, and four fields that are almost always right made the group they
+// were in the tallest thing in the window.
+func (s *settingsTab) buildAdvancedSection(settings config.Config) fyne.CanvasObject {
+	return container.NewVBox(
+		inlineCaption("For the built-in server. The defaults suit most machines."),
+		widget.NewForm(
+			widget.NewFormItem("Python", s.pythonPath),
+			widget.NewFormItem("CPU threads", s.cpuThreads),
+			widget.NewFormItem("Korean port", s.localKoreanPort),
+			widget.NewFormItem("English port", s.localEnglishPort),
 		),
 	)
 }
@@ -220,14 +266,16 @@ func (s *settingsTab) onTLSChanged(enabled bool) {
 	s.tlsBox.Hide()
 }
 
+// onModeChanged shows the remote server's fields only when one is in use.
+//
+// It no longer hides the local server's, because those have their own tab and
+// hiding them would empty it.
 func (s *settingsTab) onModeChanged(label string) {
 	if modeFromLabel(label) == config.ModeLocal {
-		s.localBox.Show()
 		s.remoteBox.Hide()
-	} else {
-		s.localBox.Hide()
-		s.remoteBox.Show()
+		return
 	}
+	s.remoteBox.Show()
 }
 
 func (s *settingsTab) onTestConnections() {
@@ -294,7 +342,6 @@ func (s *settingsTab) buildMicrophoneSection(settings config.Config) fyne.Canvas
 	s.refreshDevices(settings.Audio.DeviceID)
 
 	return container.NewVBox(
-		sectionHeading("Microphone"),
 		s.microphone,
 		container.NewBorder(nil, nil, nil, s.testButton, s.levelBar.Object()),
 		container.NewBorder(nil, nil, inlineCaption("Input level"), fixedWidth(s.gainLabel, widestGainLabel()), s.gain),
@@ -308,8 +355,16 @@ func (s *settingsTab) buildMicrophoneSection(settings config.Config) fyne.Canvas
 	)
 }
 
+// availableDevices is the capture backend, or whatever a test put in its place.
+func (s *settingsTab) availableDevices() ([]audio.Device, error) {
+	if s.listDevices != nil {
+		return s.listDevices()
+	}
+	return s.app.capture.Devices()
+}
+
 func (s *settingsTab) refreshDevices(selectedID string) {
-	devices, err := s.app.capture.Devices()
+	devices, err := s.availableDevices()
 	s.devices = devices
 
 	names := make([]string, 0, len(devices))
@@ -328,7 +383,7 @@ func (s *settingsTab) refreshDevices(selectedID string) {
 	s.microphone.Refresh()
 
 	if err != nil {
-		s.message.SetText(fmt.Sprintf("Could not list microphones: %v", err))
+		s.say(fmt.Sprintf("Could not list microphones: %v", err))
 	}
 }
 
@@ -356,20 +411,20 @@ func (s *settingsTab) onTestMicrophone() {
 	}
 
 	if !s.app.controller.State().AcceptsSettingsChanges() {
-		s.message.SetText("Stop dictation before testing the microphone.")
+		s.say("Stop dictation before testing the microphone.")
 		return
 	}
 
 	device := s.selectedDevice()
 	if err := s.app.capture.Start(device.ID, func([]byte) {}); err != nil {
-		s.message.SetText(fmt.Sprintf("Could not open %s: %v", device.Name, err))
+		s.say(fmt.Sprintf("Could not open %s: %v", device.Name, err))
 		return
 	}
 
 	stop := make(chan struct{})
 	s.testStop = stop
 	s.testButton.SetText("Stop test")
-	s.message.SetText("Speak normally — the bar should move.")
+	s.say("Speak normally — the bar should move.")
 
 	go func() {
 		ticker := time.NewTicker(60 * time.Millisecond)
@@ -411,7 +466,6 @@ func (s *settingsTab) buildShortcutSection(settings config.Config) fyne.CanvasOb
 	s.livePreview.SetChecked(settings.Input.LivePreview)
 
 	return container.NewVBox(
-		sectionHeading("Shortcut and typing"),
 		row,
 		s.shortcutKey,
 		caption("The shortcut works in any application. It takes effect when you save."),
@@ -478,7 +532,6 @@ func (s *settingsTab) buildUpdateSection(settings config.Config) fyne.CanvasObje
 	s.downloadButton.Hide()
 
 	return container.NewVBox(
-		sectionHeading("Software update"),
 		widget.NewLabel(fmt.Sprintf("Local Dictation %s", s.app.options.Version)),
 		s.updateStatus,
 		container.NewHBox(s.updateButton, s.downloadButton),
@@ -667,6 +720,20 @@ func (s *settingsTab) buildActions() fyne.CanvasObject {
 	return container.NewHBox(s.saveButton)
 }
 
+// say puts a line under the Save button, and gives the space back when there
+// is nothing to say.
+//
+// The label is one wrapped line of permanent blank otherwise, below every
+// group on every tab, for the sake of the few seconds after a save.
+func (s *settingsTab) say(text string) {
+	s.message.SetText(text)
+	if text == "" {
+		s.message.Hide()
+		return
+	}
+	s.message.Show()
+}
+
 func (s *settingsTab) onSave() {
 	settings := s.app.Settings()
 
@@ -694,11 +761,11 @@ func (s *settingsTab) onSave() {
 	settings.Audio.Gain = audio.ClampGain(s.gain.Value)
 
 	if err := s.app.ApplySettings(settings); err != nil {
-		s.message.SetText(err.Error())
+		s.say(err.Error())
 		dialog.ShowError(err, s.app.window)
 		return
 	}
-	s.message.SetText("Settings saved.")
+	s.say("Settings saved.")
 }
 
 // setEditable locks the tab while dictation is running, matching the plan's

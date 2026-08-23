@@ -58,13 +58,30 @@ func TestTheSettingsTabBuildsWithoutCallingBackIntoTheApp(t *testing.T) {
 	if tab.mode.OnChanged == nil {
 		t.Error("the mode handler was never attached, so the radio is inert")
 	}
-	// The initial mode still has to decide which half is on screen, even though
-	// the handler no longer runs during construction.
-	if tab.localBox.Hidden {
-		t.Error("local mode was selected but its settings are hidden")
-	}
+	// The initial mode still has to decide whether the remote half is on
+	// screen, even though the handler no longer runs during construction.
 	if !tab.remoteBox.Hidden {
 		t.Error("local mode was selected but the remote settings are showing")
+	}
+}
+
+// The local server's settings have their own tab now, so the mode no longer
+// hides them: hiding them would empty that tab, and someone may well want to
+// point the built-in server at a model before switching to it.
+func TestTheLocalServerSettingsStayVisibleInRemoteMode(t *testing.T) {
+	settings := testSettings()
+	settings.Mode = config.ModeRemote
+
+	tab := &settingsTab{app: halfBuiltApp(settings)}
+	tab.buildServerSection(settings)
+	tab.buildLocalServerSection(settings)
+
+	if tab.localBox.Hidden {
+		t.Error("the local server's tab would be blank in remote mode")
+	}
+	tab.mode.SetSelected("This computer")
+	if tab.localBox.Hidden {
+		t.Error("switching to local mode hid the local server's settings")
 	}
 }
 
@@ -78,9 +95,6 @@ func TestTheSettingsTabShowsTheRemoteHalfInRemoteMode(t *testing.T) {
 
 	if tab.remoteBox.Hidden {
 		t.Error("remote mode was selected but the remote settings are hidden")
-	}
-	if !tab.localBox.Hidden {
-		t.Error("remote mode was selected but the local settings are showing")
 	}
 }
 

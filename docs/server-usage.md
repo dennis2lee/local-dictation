@@ -161,14 +161,14 @@ Three things have to agree on the number, and only the first is in this file:
 | --- | --- |
 | The server | `server.port` in that language's config |
 | The firewall | The inbound rule, if the server is not on loopback |
-| Each client | **Settings → Remote servers**, the Korean and English port fields |
+| Each client | **Settings → Server**, the Korean and English port fields |
 
 A client pointed at the old port reports that it cannot reach the server, which
 is accurate and unhelpful — change the clients in the same sitting.
 
 In standalone mode none of this applies: the client starts the server itself and
 leaves the ports at `0`, which means "pick a free one at startup". Pin them in
-**Settings → This computer** only if something else on the machine needs those
+**Settings → Advanced** only if something else on the machine needs those
 numbers to be predictable.
 
 ### Changing how many sessions a server accepts

@@ -193,7 +193,7 @@ an English session. Every command takes `ko`, `en` or `all`.
 
 To use different ports, set `server.port` in each language's config — they must
 differ from each other, and from anything else on the host. Remember the clients:
-the number has to match in **Settings → Remote servers**.
+the number has to match in **Settings → Server**.
 [server-usage.md](server-usage.md#changing-the-ports) has the detail, including
 the environment override that changes a port without editing a file.
 

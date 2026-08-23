@@ -199,7 +199,7 @@ servers changed them, these two fields are where the client has to be told —
 a mismatch shows as a server it cannot reach.
 
 In standalone mode the client picks its own free ports and there is nothing to
-set. **Settings → This computer** has port fields anyway, left empty; fill them
+set. **Settings → Advanced** has port fields anyway, left empty; fill them
 in only if something on your machine needs the numbers to be predictable.
 
 ---

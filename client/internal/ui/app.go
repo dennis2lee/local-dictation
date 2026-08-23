@@ -111,6 +111,13 @@ func New(options Options) (*App, error) {
 	return application, nil
 }
 
+// The shipped window size, named so the test that checks every settings group
+// fits inside it is measuring the same window the user gets.
+const (
+	windowWidth  = 560
+	windowHeight = 480
+)
+
 func (a *App) buildWindow() {
 	// Before any widget is built, so nothing is measured against the default
 	// theme's type sizes and then re-laid out.
@@ -127,7 +134,17 @@ func (a *App) buildWindow() {
 	if icon := appIcon(); icon != nil {
 		a.window.SetIcon(icon)
 	}
-	a.window.Resize(fyne.NewSize(560, 620))
+	// Sized to the tallest group, not to the sum of them.
+	//
+	// Settings used to be one column about 1335px long inside a 620px window,
+	// so it scrolled whatever was on screen and the height was a compromise
+	// between two bad options. Split into groups, the tallest is around 345px,
+	// and this fits every one of them except Server in remote mode, which runs
+	// over by about a field.
+	//
+	// Width stays where it was: the form labels and the row of group tabs both
+	// need it, and narrowing it would only wrap the captions into more height.
+	a.window.Resize(fyne.NewSize(windowWidth, windowHeight))
 	a.window.SetCloseIntercept(func() {
 		// Closing the window keeps dictation available from the tray, which is
 		// the point of a shortcut-driven tool.

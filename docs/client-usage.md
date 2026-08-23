@@ -67,9 +67,22 @@ change them.
 
 ## Settings
 
-Everything here is set once, after installing.
+Everything here is set once, after installing. It is grouped into tabs, so that
+finding one setting does not mean scrolling past all of them:
 
-### Servers
+| Tab | What is on it |
+| --- | --- |
+| **Server** | Which server to use, its address, and the connection test |
+| **Local server** | Where the models are, for the server this app runs itself |
+| **Advanced** | Python, threads and ports for that same built-in server |
+| **Microphone** | Device, level meter and input gain |
+| **Typing** | The shortcut, and when words are typed |
+| **Updates** | The installed version, and checking for a newer one |
+
+**Save** sits below the tabs and applies all of them at once, so edits on
+several tabs are one save.
+
+### Server
 
 **This computer** (the default) runs the speech server on your own machine. The
 first session after launching takes longer while the model loads — around ten
@@ -124,18 +137,31 @@ compressor, so it cannot pump or breathe mid-sentence — and it cannot rescue a
 signal that was already clipping. If the meter is reaching red before you touch
 it, turn the microphone down at the system mixer instead.
 
-### Shortcut
+### Typing
 
-Choose the modifiers and key. The change takes effect when you save.
+Choose the modifiers and key for the shortcut. The change takes effect when you
+save.
 
 If the shortcut does not respond after saving, something else is already using
 it — pick a different key. On macOS, the other possibility is that Accessibility
 permission was revoked; the Main tab says so when that happens.
 
-### Software update
+**Show words before they settle**, on the same tab, is off by default.
+
+With it off a word is typed once, when the server is sure of it. Text appears a
+beat behind you and never moves.
+
+With it on, the tail Whisper has not settled on yet is typed as it is guessed
+and rewritten whenever it changes. It looks livelier, and it cannot keep up with
+a fast speaker: neither platform here has a real input method behind it, so
+rewriting means backspacing real characters out of your document and typing
+them again — for one short sentence, forty-six keystrokes instead of fourteen.
+If dictation lags behind your voice, this is the setting.
+
+### Updates
 
 Shows the installed version. **Check for updates** looks for a newer one, and
-the section header line tells you where it will look before you press it.
+the line above the button says where it will look before you press it.
 
 By default that is this project's own releases on github.com. When a newer one
 exists, the version and a link to its notes appear, along with **Download and
@@ -160,20 +186,6 @@ still there, so fetching it by hand stays your decision.
 
 Nothing is sent anywhere. The check is one HTTPS GET for the release list, and
 it only happens when you press the button.
-
-### Typing
-
-**Show words before they settle**, under Shortcut and typing, is off.
-
-With it off a word is typed once, when the server is sure of it. Text appears a
-beat behind you and never moves.
-
-With it on, the tail Whisper has not settled on yet is typed as it is guessed
-and rewritten whenever it changes. It looks livelier, and it cannot keep up with
-a fast speaker: neither platform here has a real input method behind it, so
-rewriting means backspacing real characters out of your document and typing
-them again — for one short sentence, forty-six keystrokes instead of fourteen.
-If dictation lags behind your voice, this is the setting.
 
 **On a managed deployment**, set `update.manifest_url` and `update.public_key`
 in `settings.json` — beside `startup.log`, in the folders listed under
