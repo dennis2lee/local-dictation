@@ -159,9 +159,39 @@ else
   # and fixes both.
   #
   # It is not a Gatekeeper signature. Recipients still clear that by hand.
+  #
+  # The designated requirement has to be set explicitly too, and that is the
+  # part that decides whether a permission survives an update. Left alone, an
+  # ad-hoc signature designates itself by hash:
+  #
+  #     designated => cdhash H"113819d9…" or cdhash H"6b5a20b8…"
+  #
+  # macOS stores that requirement when the user grants Accessibility, so the
+  # grant is bound to that exact build. Every release is a different binary, so
+  # every update revoked it — while the switch in System Settings stayed on,
+  # which is the confusing part: it looks granted and is not. With an
+  # auto-updater in the app that meant re-granting Accessibility roughly as
+  # often as it updated.
+  #
+  # Designating by identifier instead, the next build satisfies the requirement
+  # the last one recorded. Verified: two builds with different cdhashes both
+  # satisfy it, and an unrelated app does not.
+  #
+  # The cost is that it is only an identifier. Any other ad-hoc bundle claiming
+  # com.local-dictation.client would satisfy it as well. Binding to a publisher
+  # instead needs a Developer ID certificate, and with one the branch above
+  # runs and none of this applies.
   info "no signing identity — signing ad-hoc so macOS can remember permissions"
-  codesign --force --deep --sign - --identifier "$BUNDLE_ID" "$APP"
+  codesign --force --deep --sign - --identifier "$BUNDLE_ID" \
+           -r "=designated => identifier \"$BUNDLE_ID\"" "$APP"
   codesign --verify --strict --verbose=2 "$APP"
+
+  # Silent if it does not take, and the symptom is one the user carries: an
+  # Accessibility prompt after every update.
+  requirement="$(codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => //p')"
+  [[ "$requirement" == "identifier \"$BUNDLE_ID\"" ]] ||
+    die "designated requirement is '$requirement', expected identifier \"$BUNDLE_ID\""
+
   info "ad-hoc signed — recipients will need to right-click > Open the first time"
 fi
 

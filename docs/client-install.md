@@ -140,10 +140,15 @@ offline transfer instructions and checksum verification are in
 
 ### macOS
 
-Open **System Settings › Privacy & Security › Accessibility** and turn on
-**Local Dictation**, then restart the app. Without it macOS will not let any
-application register a global shortcut or type into another app — the shortcut
-will simply do nothing.
+The first launch asks for Accessibility and offers to open the pane. Turn on
+**Local Dictation** there, then restart the app. Without it macOS will not let
+any application register a global shortcut or type into another app — the
+shortcut will simply do nothing.
+
+It asks once. Later launches check the answer without showing anything, and
+the grant now survives updates: the app is signed so that macOS recognises the
+next version as the same application rather than as a stranger with the same
+name.
 
 Microphone access is requested the first time you dictate; allow it.
 
@@ -190,9 +195,9 @@ Its own guide: [server-install.md](server-install.md). It covers where the
 install goes, why it needs no root, the model, TLS, and what to check when a
 server will not start.
 
-Once they are running, point this client at them: **Settings** tab, **Remote
-servers**, the address and the two ports, then **Test connections**. Both LEDs
-should turn green.
+Once they are running, point this client at them: **Settings → Server**,
+**Remote servers**, the address and the two ports, then **Test connections**,
+which sits at the top right of that tab. Both LEDs should turn green.
 
 The ports default to 8765 for Korean and 8766 for English. If whoever runs the
 servers changed them, these two fields are where the client has to be told —

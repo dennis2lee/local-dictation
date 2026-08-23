@@ -53,8 +53,11 @@ static int ld_is_trusted(void) {
 // kAXTrustedCheckOptionPrompt is what puts it in the list and shows the system
 // dialog offering to open the pane.
 //
-// Called once per launch, and only when the answer is already no, so a granted
-// install never sees a dialog.
+// Only called when a silent check has already said no — see newPlatform. The
+// prompting call is documented not to show anything to an app that is already
+// trusted, but "documented not to" is a poor thing to rest a dialog on when
+// the dialog appears at launch, so the decision is made here where it can be
+// read.
 static int ld_request_trust(void) {
     CFStringRef keys[] = { kAXTrustedCheckOptionPrompt };
     CFTypeRef values[] = { kCFBooleanTrue };
@@ -87,9 +90,14 @@ const unicodeChunk = 20
 type darwinTyper struct{}
 
 func newPlatform() (platformType, error) {
-	// Request rather than check. The difference is whether the app is in the
-	// Accessibility list at all: macOS adds it when it asks, and until then the
-	// instructions below name a row the user cannot find.
+	// Already trusted is the common case, and it must be silent. Asking is for
+	// the first launch only: the difference between asking and checking is
+	// whether the app is in the Accessibility list at all — macOS adds it when
+	// it asks, and until then the instructions below name a row the user
+	// cannot find.
+	if C.ld_is_trusted() == 1 {
+		return &keystrokeComposer{typer: &darwinTyper{}}, nil
+	}
 	if C.ld_request_trust() == 0 {
 		return nil, errors.New(
 			"Local Dictation is not trusted for Accessibility, so it cannot type. " +

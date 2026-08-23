@@ -235,8 +235,8 @@ because a listener that looks encrypted and is not is worse than a plain one.
 Then `check` before you restart — it reads the certificate files, so an unreadable
 one is caught before the port opens.
 
-In the client's **Settings** tab, choose **Remote servers** and give it the host
-and the two ports.
+In the client's **Settings → Server** tab, choose **Remote servers** and give it
+the host and the two ports.
 
 ## Updating
 

@@ -17,10 +17,10 @@ If you have not installed it yet, start with [client-install.md](client-install.
    server transcribes Korean, an English server transcribes English, and both
    stay predictable.
 3. **Press `Ctrl+Shift+M`.** The indicator turns green and words start appearing
-   at your cursor about a second after you start speaking.
-4. **Keep talking.** Text that has settled stops changing. The tail keeps being
-   revised as more of the sentence arrives — that is normal, and it is why the
-   most recent few words shift around before they stop.
+   at your cursor a moment after you start speaking.
+4. **Keep talking.** Words appear a beat behind your voice and then stay put.
+   Nothing that has been typed is rewritten, so you can watch the text or not,
+   as you prefer.
 5. **Press `Ctrl+Shift+M` again.** The indicator turns amber while the accurate
    model does one last pass, then the finished sentence is committed and the
    session ends.
@@ -29,17 +29,23 @@ The shortcut works from any application. You do not have to bring Local
 Dictation to the front, and you should not: it types into whatever was focused
 when you pressed it.
 
-## What the two kinds of text mean
+## Why text arrives a beat late
 
-While you speak, what you see is a mix of two things:
+A word is typed once, when the server is sure of it, and then it never moves.
 
-- **Settled text** — already committed. It will not change.
-- **The tail** — the model's current best guess at the last few words. It gets
-  replaced as the sentence continues.
+The delay is the cost of that certainty. Whisper revises its guess at the last
+few words as more of the sentence arrives, so a word can only be typed once it
+has stopped changing — which takes one more pass. What you get in exchange is
+that nothing on screen is ever rewritten under you.
 
-If the connection drops or something goes wrong, the settled text is kept and
-the tail is removed. You never end up with half a wrong word left behind, and
-you never lose a sentence you already watched finish.
+The alternative is on the **Typing** tab: **Show words before they settle**
+types the unsettled tail as it is guessed and rewrites it whenever it changes.
+It looks livelier and it cannot keep up with a fast speaker — see that tab for
+why.
+
+If the connection drops or something goes wrong, everything already typed is
+kept. You never end up with half a wrong word left behind, and you never lose a
+sentence you already watched finish.
 
 ## Punctuation and formatting
 
@@ -49,7 +55,9 @@ commands: saying "comma" types the word "comma". Say the sentence, then fix
 punctuation by hand if it matters.
 
 Pausing for about half a second ends the sentence and commits it. That is the
-natural rhythm to dictate in: a sentence, a breath, a sentence.
+natural rhythm to dictate in: a sentence, a breath, a sentence. Each finished
+sentence is followed by a space, so a paragraph dictated in several breaths
+reads as a paragraph rather than as one run-on line.
 
 ## Status indicator
 
@@ -113,8 +121,8 @@ jobs.
 
 ### Microphone
 
-Pick a device, then press **Test microphone** and speak. The bar should move.
-Press it again to stop.
+Pick a device, then press **Test microphone** and speak. The meter beside it
+should light up. Press it again to stop.
 
 **Default system microphone** follows whatever the OS is using, so plugging in a
 headset switches automatically. Choosing a specific device pins it; if that
@@ -260,9 +268,12 @@ session, so the warning above about where text lands applies.
 
 ### Nothing is transcribed but the indicator is green
 
-The microphone is probably muted or set to a device that is not picking you up.
-Stop dictating and use **Test microphone** in Settings — if the bar does not
-move, the problem is the device, not the transcription.
+The microphone is probably muted, set to a device that is not picking you up, or
+turned down too far. Stop dictating and use **Test microphone** on the
+**Microphone** tab. If no segments light while you speak, the problem is the
+device, not the transcription. If a few light but the meter barely leaves the
+left end, raise **Input level** until you are in the green with the odd amber
+peak.
 
 ### Words appear slowly
 
@@ -274,16 +285,33 @@ under one without changing the final text at all.
 
 ### It transcribed the wrong language
 
-Check which language is selected on the Main tab, and that the ports in Settings
-are not swapped. Press **Test connections**: it reports what each port actually
-serves.
+Check which language is selected on the Main tab, and that the ports on
+**Settings → Server** are not swapped. Press **Test connections**, at the top
+right of that tab: it reports what each port actually serves.
 
 ### Text is duplicated or letters go missing
 
-Local Dictation replaces provisional text by sending backspaces. An application
-with aggressive autocorrect or auto-indent can fight with that. It is most
-visible in code editors. If a particular application misbehaves, dictate into a
-plain text field and paste.
+Check whether **Show words before they settle** is on, on the **Typing** tab. It
+is off by default, and with it off nothing is ever rewritten, so this class of
+problem does not arise.
+
+With it on, provisional text is replaced by sending backspaces, and an
+application with aggressive autocorrect or auto-indent can fight with that — it
+is most visible in code editors. Turn it off, or dictate into a plain text field
+and paste.
+
+### macOS asks for Accessibility again
+
+It should ask once. Later launches check the answer without showing anything,
+and a permission granted to one version now carries over to the next: the app is
+signed so that macOS recognises an update as the same application rather than as
+a stranger with the same name. Builds before 0.1.23 were not, which is why every
+update used to ask again — while the switch in System Settings stayed on, which
+is the confusing part. It looks granted and is not.
+
+If it does ask again, the reliable fix is to remove **Local Dictation** from
+**System Settings › Privacy & Security › Accessibility** with the **−** button
+and let the app ask once more, rather than toggling the existing row.
 
 ---
 
