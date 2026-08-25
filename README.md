@@ -5,7 +5,7 @@ shortcut, speak, press it again — the text appears in whatever application you
 were already using. Audio never leaves the machine that transcribes it.
 
 ```
-  Ctrl+Shift+M ──▶  🎤  ──▶  Whisper large-v3 (CPU, INT8)  ──▶  your cursor
+  Ctrl+Shift+M ──▶  🎤  ──▶  Whisper large-v3  ──▶  your cursor
                             on this machine, or on your own server
 ```
 
@@ -18,6 +18,10 @@ were already using. Audio never leaves the machine that transcribes it.
 - **Two languages, two servers.** No automatic detection: a Korean server
   transcribes Korean and an English one transcribes English, so the output is
   predictable and each is separately observable.
+- **CPU or GPU.** Decodes on any CPU everywhere, on an Apple Silicon GPU
+  through MLX, or on an Intel GPU through OpenVINO. One setting, three model
+  formats, and no silent fall back to the CPU when the GPU is not there —
+  [model-setup.md](docs/model-setup.md).
 - **Windows and macOS**, with an Ubuntu or macOS server for shared deployments.
 
 ## Getting started

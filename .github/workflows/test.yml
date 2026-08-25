@@ -35,6 +35,14 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --quiet -e '.[dev]'
+          # The OpenVINO backend's own tests skip without it, and the ones that
+          # skip are the ones worth having: refusing a device that lets the
+          # runtime choose, and refusing another backend's model directory.
+          # Neither needs an Intel GPU — only the import — and the wheel exists
+          # for this runner. The MLX backend has no such option; its wheels are
+          # arm64 macOS only, so those tests skip here and always will.
+          .venv/bin/pip install --quiet -e '.[openvino]' || \
+            echo "openvino-genai unavailable on this runner; its tests will skip"
       - name: Test
         working-directory: server
         run: .venv/bin/python -m pytest -q

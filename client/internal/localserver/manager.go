@@ -41,6 +41,9 @@ type ManagerSettings struct {
 	VadModelPath   string
 	StateDir       string
 	CPUThreads     int
+	// Backend is the hardware the server decodes on. Empty means CPU, which
+	// is what every settings file written before this field existed says.
+	Backend Backend
 	// Fixed ports, or 0 to choose free ones.
 	KoreanPort  int
 	EnglishPort int
@@ -72,9 +75,11 @@ func (m *Manager) Prepare(ctx context.Context, progress func(string)) error {
 		return err
 	}
 
-	venvDir := filepath.Join(settings.StateDir, "venv")
-	wheelDir := filepath.Join(filepath.Dir(serverDir), "wheels")
-	python, err := EnsureRuntime(ctx, base, venvDir, wheelDir, progress)
+	// One environment per backend, never shared: see Backend.VenvName.
+	backend := settings.Backend.Normalise()
+	venvDir := filepath.Join(settings.StateDir, backend.VenvName())
+	wheelDir := filepath.Join(filepath.Dir(serverDir), backend.WheelDirName())
+	python, err := EnsureRuntime(ctx, base, venvDir, wheelDir, backend, progress)
 	if err != nil {
 		return err
 	}
@@ -126,6 +131,7 @@ func (m *Manager) Ensure(ctx context.Context, language protocol.Language, progre
 		Port:           port,
 		CPUThreads:     settings.CPUThreads,
 		StateDir:       settings.StateDir,
+		Backend:        settings.Backend,
 	})
 	if err != nil {
 		return nil, err
@@ -191,7 +197,11 @@ func (m *Manager) Update(ctx context.Context, settings ManagerSettings) error {
 	// The cached interpreter and resolved directory are derived from these
 	// two; comparing *before* the assignment is what makes a change actually
 	// take effect rather than being compared against itself.
-	if m.settings.PythonPath != settings.PythonPath || m.settings.ServerDir != settings.ServerDir {
+	// Backend belongs here too: it decides which environment Prepare builds,
+	// so a cached interpreter from the previous backend is the wrong one.
+	if m.settings.PythonPath != settings.PythonPath ||
+		m.settings.ServerDir != settings.ServerDir ||
+		m.settings.Backend.Normalise() != settings.Backend.Normalise() {
 		m.python = ""
 		m.serverDir = ""
 	}

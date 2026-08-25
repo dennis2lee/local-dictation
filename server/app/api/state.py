@@ -23,6 +23,11 @@ class AppState:
     limiter: SessionLimiter
     metrics: Metrics
     executor: ThreadPoolExecutor
+    #: Which backend the process was started with. Reported by /health/ready
+    #: so a client that asked for a GPU can confirm it got one: an open port
+    #: proves only that something is listening, and every backend serves the
+    #: same protocol on it.
+    backend: str = field(default="whisper")
     #: Flips true once the warmup decode has run. `/health/ready` gates on it so
     #: a rolling restart does not send traffic to a process still loading 3 GB
     #: of weights.
@@ -31,12 +36,18 @@ class AppState:
 
     @classmethod
     def create(
-        cls, settings: Settings, transcriber: Transcriber, draft: Transcriber | None = None
+        cls,
+        settings: Settings,
+        transcriber: Transcriber,
+        draft: Transcriber | None = None,
+        *,
+        backend: str = "whisper",
     ) -> AppState:
         return cls(
             settings=settings,
             transcriber=transcriber,
             draft=draft,
+            backend=backend,
             limiter=SessionLimiter(settings.limits.max_sessions),
             metrics=Metrics(language=settings.language, model=transcriber.name),
             # One worker per admissible session: the model serialises internally

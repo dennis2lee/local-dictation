@@ -6,6 +6,8 @@
 #   ./fetch-model.sh large-v3-turbo         # turbo         into the default dir
 #   ./fetch-model.sh base                   # draft model, for live partials
 #   ./fetch-model.sh large-v3-turbo-mlx     # for --backend mlx (Apple Silicon)
+#   ./fetch-model.sh large-v3-turbo-openvino-int8
+#                                           # for --backend openvino (Intel GPU)
 #   ./fetch-model.sh all --dest ./models    # all three + VAD, into ./models
 #   ./fetch-model.sh --list                 # show sizes, download nothing
 #   ./fetch-model.sh --verify --dest ./models
@@ -25,8 +27,8 @@
 # Options:
 #   --dest DIR        install root          (default: $LD_MODELS_DIR, else
 #                                            /opt/local-dictation/models)
-#   --repo ID         override the source repository. Any CTranslate2 Whisper
-#                     conversion works, including a smaller model or a mirror.
+#   --repo ID         override the source repository. Any conversion in the same
+#                     format works, including a smaller model or a mirror.
 #   --metadata-only   skip the multi-GB weights; useful to test connectivity
 #   --force           re-download files that are already present
 #   --list            print the file list with sizes and exit
@@ -53,6 +55,20 @@ REPO_BASE="Systran/faster-whisper-base"
 # weights.safetensors rather than model.bin, and the two formats are not
 # interchangeable: each backend refuses the other's directory at startup.
 REPO_LARGE_V3_TURBO_MLX="mlx-community/whisper-large-v3-turbo"
+# A third conversion of the same weights, for --backend openvino. CTranslate2
+# has no Intel GPU backend, so on a machine whose fastest processor is an Arc
+# iGPU this is the only route off the CPU. These hold openvino_encoder_model.xml
+# and its siblings rather than model.bin, and no two of the three formats are
+# interchangeable: each backend refuses the others' directory at startup.
+#
+# Three precisions because which one to ship is a measurement, not an opinion.
+# INT8 is the expected answer — smaller and faster than FP16, and usually
+# indistinguishable in accuracy — but INT4 can cost more Korean accuracy than
+# it buys in speed, and that has to be checked on the machine rather than
+# assumed. openvino-benchmark.py measures all three.
+REPO_LARGE_V3_TURBO_OV_INT8="OpenVINO/whisper-large-v3-turbo-int8-ov"
+REPO_LARGE_V3_TURBO_OV_FP16="OpenVINO/whisper-large-v3-turbo-fp16-ov"
+REPO_LARGE_V3_TURBO_OV_INT4="OpenVINO/whisper-large-v3-turbo-int4-ov"
 SILERO_URL="https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.onnx"
 
 # The file set differs between conversions: the large-v3 repos carry
@@ -121,7 +137,10 @@ repo_for() {
     large-v3-turbo) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO}" ;;
     base)           printf '%s' "${REPO_OVERRIDE:-$REPO_BASE}" ;;
     large-v3-turbo-mlx) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO_MLX}" ;;
-    *) die "unknown model '$1' (expected: large-v3, large-v3-turbo, base, large-v3-turbo-mlx, vad or all)" ;;
+    large-v3-turbo-openvino-int8) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO_OV_INT8}" ;;
+    large-v3-turbo-openvino-fp16) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO_OV_FP16}" ;;
+    large-v3-turbo-openvino-int4) printf '%s' "${REPO_OVERRIDE:-$REPO_LARGE_V3_TURBO_OV_INT4}" ;;
+    *) die "unknown model '$1' (expected: large-v3, large-v3-turbo, base, large-v3-turbo-mlx, large-v3-turbo-openvino-{int8,fp16,int4}, vad or all)" ;;
   esac
 }
 
@@ -206,7 +225,9 @@ verify() {
 
 list_sizes() {
   local total=0
-  for model in large-v3 large-v3-turbo base large-v3-turbo-mlx; do
+  for model in large-v3 large-v3-turbo base large-v3-turbo-mlx \
+               large-v3-turbo-openvino-int8 large-v3-turbo-openvino-fp16 \
+               large-v3-turbo-openvino-int4; do
     local repo; repo="$(repo_for "$model")"
     printf '%-16s %s\n' "$model" "$repo"
     local files=()
@@ -226,6 +247,7 @@ list_sizes() {
 while [[ $# -gt 0 ]]; do
   case "$1" in
     large-v3|large-v3-turbo|base|large-v3-turbo-mlx|vad|all) MODEL="$1" ;;
+    large-v3-turbo-openvino-int8|large-v3-turbo-openvino-fp16|large-v3-turbo-openvino-int4) MODEL="$1" ;;
     --dest)          DEST="${2:?--dest needs a directory}"; shift ;;
     --repo)          REPO_OVERRIDE="${2:?--repo needs an id}"; shift ;;
     --metadata-only) METADATA_ONLY=1 ;;
@@ -255,7 +277,17 @@ info "installed under $DEST"
 # base is a draft model: it produces the live partial text and nothing that is
 # kept, so it belongs on draft_path. Naming it as model.path would quietly
 # downgrade every transcript the server commits.
-if [[ "$MODEL" == "large-v3-turbo-mlx" ]]; then
+if [[ "$MODEL" == large-v3-turbo-openvino-* ]]; then
+  info ""
+  info "an OpenVINO export, for an Intel GPU:"
+  info "  model.path:                     $DEST/${MODEL}"
+  info "  model.device:                   GPU"
+  info "  streaming.silero_model_path:    $DEST/silero_vad.onnx"
+  info "  run the server with:            --backend openvino"
+  info ""
+  info "measure it before trusting it — app/scripts/openvino-benchmark.py"
+  info "reports decode time and real-time factor per precision on this machine."
+elif [[ "$MODEL" == "large-v3-turbo-mlx" ]]; then
   info ""
   info "an MLX conversion, for the Apple Silicon GPU:"
   info "  model.path:                     $DEST/${MODEL}"

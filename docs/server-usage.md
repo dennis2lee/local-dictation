@@ -215,16 +215,34 @@ sounds: a `model.path` holding MLX weights will not start under the default
 backend, so a restart from a shell that happened not to export `LD_BACKEND`
 would fail with a model it cannot read.
 
-| | `whisper` (default) | `mlx` |
-| --- | --- | --- |
-| Runs on | any CPU, and NVIDIA GPUs | Apple Silicon GPU |
-| Engine | faster-whisper / CTranslate2 | MLX |
-| Model format | `model.bin` | `weights.safetensors` |
-| Install | `pip install -e '.[inference]'` | `pip install -e '.[mlx]'` |
-| Fetch the model | `fetch-model.sh large-v3-turbo` | `fetch-model.sh large-v3-turbo-mlx` |
+| | `whisper` (default) | `mlx` | `openvino` |
+| --- | --- | --- | --- |
+| Runs on | any CPU, and NVIDIA GPUs | Apple Silicon GPU | Intel GPU or NPU |
+| Engine | faster-whisper / CTranslate2 | MLX | OpenVINO GenAI |
+| Model format | `model.bin` | `weights.safetensors` | `openvino_encoder_model.xml` |
+| Install | `pip install -e '.[inference]'` | `pip install -e '.[mlx]'` | `pip install -e '.[openvino]'` |
+| Fetch the model | `fetch-model.sh large-v3-turbo` | `fetch-model.sh large-v3-turbo-mlx` | `fetch-model.sh large-v3-turbo-openvino-int8` |
+| Also set | — | — | `model.device: GPU` |
 
-The two conversions are not interchangeable, and each backend says so rather
+The three conversions are not interchangeable, and each backend says so rather
 than failing inside the first decode. `check` catches it before a restart.
+
+**`openvino` needs `model.device` set as well**, and it will not choose for
+you: `AUTO`, `HETERO` and `MULTI` are refused rather than accepted, because
+each of them silently lands on the CPU when the GPU plugin fails to load, and
+the only symptom of that is dictation being slow. Name `GPU` — or `GPU.1` on a
+machine with a discrete card beside the integrated one — and a device that is
+not there is a startup error listing the ones that are.
+
+`/health/ready` and `/status` report what actually loaded:
+
+```json
+"engine": {"backend": "openvino", "device": "GPU", "device_name": "Intel(R) Arc(TM) 140V GPU"}
+```
+
+That is the only way to confirm from outside the process that a GPU is doing
+the work. An open port proves nothing — every backend serves the same protocol
+on it.
 
 **On a Mac, `mlx` is worth reaching for.** Measured on a MacBook Air M5, Korean,
 five clips through the real WebSocket protocol:
@@ -289,7 +307,7 @@ Handed to the inference backend. `device`, `compute_type`, `cpu_threads` and
 | Key | Default | Accepts | What it does |
 | --- | --- | --- | --- |
 | `path` | `<prefix>/models/large-v3-turbo` | a directory holding `model.bin` | A CTranslate2 conversion, never a HuggingFace repo id: the server makes no outbound requests. `check` opens it. |
-| `device` | `cpu` | `cpu`, `cuda`, `auto` | Read by the `whisper` backend only. `cuda` needs a CTranslate2 built with CUDA and an NVIDIA GPU; **on Apple Silicon no value here reaches the GPU**, because CTranslate2 has no Metal backend. That is what [`--backend mlx`](#choosing-a-backend) is for. |
+| `device` | `cpu` | `whisper`: `cpu`, `cuda`, `auto`. `openvino`: `GPU`, `GPU.1`, `CPU`, `NPU` | Read by the `whisper` and `openvino` backends; `mlx` ignores it. `cuda` needs a CTranslate2 built with CUDA and an NVIDIA GPU; **on Apple Silicon no value here reaches the GPU**, because CTranslate2 has no Metal backend — that is what [`--backend mlx`](#choosing-a-backend) is for. Under `openvino` this is an OpenVINO device string and the ones that defer the choice (`AUTO`, `HETERO`, `MULTI`) are refused. |
 | `compute_type` | `int8` | on CPU: `int8`, `int8_float32`, `float32` | Ask your own build rather than guessing: `python -c "import ctranslate2; print(ctranslate2.get_supported_compute_types('cpu'))"`. `int8` is what the latency budget assumes. |
 | `language` | `ko` | `ko`, `en` | There is no auto-detection. Each server transcribes one language, which is what makes a swapped port a detectable mistake rather than fluent nonsense. |
 | `beam_size` | `1` | ≥ 1 | `1` is greedy. Beam search roughly doubles wall-clock for an accuracy gain dictation — where the text is appearing as you watch — does not benefit from. |

@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 def create_app(settings: Settings, *, backend: str = "whisper") -> FastAPI:
     transcriber = create_transcriber(settings.model, backend=backend)
     draft = create_draft_transcriber(settings.model, backend=backend)
-    state = AppState.create(settings, transcriber, draft)
+    state = AppState.create(settings, transcriber, draft, backend=backend)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -40,6 +40,8 @@ def create_app(settings: Settings, *, backend: str = "whisper") -> FastAPI:
                 "port": settings.server.port,
                 "model": transcriber.name,
                 "draft_model": draft.name if draft else None,
+                "backend": backend,
+                "device": getattr(transcriber, "device_name", None),
                 "max_sessions": settings.limits.max_sessions,
                 "protocol_version": PROTOCOL_VERSION,
                 "version": __version__,
@@ -93,6 +95,8 @@ def preflight(settings: Settings, *, backend: str) -> tuple[list[str], list[str]
         # rather than three seconds into the first utterance.
         if backend == "mlx":
             from app.inference.mlx import WEIGHTS as accepted
+        elif backend == "openvino":
+            from app.inference.openvino import WEIGHTS as accepted
         else:
             accepted = ("model.bin",)
         wanted = " or ".join(accepted)
@@ -143,10 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--language", choices=["ko", "en"], help="override model.language")
     parser.add_argument(
         "--backend",
-        choices=["whisper", "fake", "mlx"],
+        choices=["whisper", "fake", "mlx", "openvino"],
         default="whisper",
         help="inference backend: 'whisper' runs on the CPU everywhere, 'mlx' on "
-        "an Apple Silicon GPU, 'fake' emits scripted text and loads no model",
+        "an Apple Silicon GPU, 'openvino' on an Intel GPU or NPU (see "
+        "model.device), 'fake' emits scripted text and loads no model",
     )
     parser.add_argument(
         "--check",

@@ -48,11 +48,6 @@ type Interpreter struct {
 // ErrNoPython means no interpreter new enough was found.
 var ErrNoPython = errors.New("no suitable Python interpreter found")
 
-// requiredModules are what the server imports at startup. faster_whisper is
-// included: without it the server starts but cannot transcribe, and finding
-// that out at the first utterance is much worse than finding it out now.
-var requiredModules = []string{"fastapi", "uvicorn", "yaml", "numpy", "faster_whisper"}
-
 // FindPython returns the first interpreter that is new enough.
 //
 // `explicit` wins if set — someone who pointed at a specific interpreter meant
@@ -119,9 +114,13 @@ func pythonVersion(ctx context.Context, path string) (Version, error) {
 	return Version{major, minor}, nil
 }
 
-// MissingModules reports which of the server's dependencies this interpreter
-// cannot import. An empty slice means the runtime is ready to serve.
-func MissingModules(ctx context.Context, pythonPath string) ([]string, error) {
+// MissingModules reports which of the named modules this interpreter cannot
+// import. An empty slice means the runtime is ready to serve.
+//
+// The list comes from the backend rather than being fixed here: each one wants
+// a different inference package, and an environment built for one of them is
+// missing the others by design, not by accident.
+func MissingModules(ctx context.Context, pythonPath string, modules []string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
@@ -131,7 +130,7 @@ for name in sys.argv[1:]:
     if importlib.util.find_spec(name) is None:
         print(name)
 `
-	args := append([]string{"-c", script}, requiredModules...)
+	args := append([]string{"-c", script}, modules...)
 	command := exec.CommandContext(ctx, pythonPath, args...)
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -158,19 +157,6 @@ func VenvPython(venvDir string) string {
 	return filepath.Join(venvDir, "bin", "python")
 }
 
-// PackageSpecs mirrors server/pyproject.toml. Kept as a list rather than a
-// requirements file so the installers have one fewer payload to keep in step.
-func PackageSpecs() []string {
-	return []string{
-		"fastapi>=0.115",
-		"uvicorn[standard]>=0.30",
-		"pyyaml>=6.0",
-		"numpy>=1.26",
-		"faster-whisper>=1.0.3",
-		"onnxruntime>=1.18",
-	}
-}
-
 // EnsureRuntime makes `venvDir` into an environment that can run the server,
 // creating it and installing dependencies if needed. It returns the path of the
 // interpreter to use.
@@ -182,7 +168,7 @@ func PackageSpecs() []string {
 // Progress lines are streamed to `progress` so the Settings tab can show what
 // is happening; installing ctranslate2 is not fast, and a frozen window looks
 // like a hang.
-func EnsureRuntime(ctx context.Context, base Interpreter, venvDir, wheelDir string, progress func(string)) (string, error) {
+func EnsureRuntime(ctx context.Context, base Interpreter, venvDir, wheelDir string, backend Backend, progress func(string)) (string, error) {
 	if progress == nil {
 		progress = func(string) {}
 	}
@@ -195,7 +181,7 @@ func EnsureRuntime(ctx context.Context, base Interpreter, venvDir, wheelDir stri
 		}
 	}
 
-	missing, err := MissingModules(ctx, venvPython)
+	missing, err := MissingModules(ctx, venvPython, backend.Modules())
 	if err != nil {
 		return "", err
 	}
@@ -211,13 +197,13 @@ func EnsureRuntime(ctx context.Context, base Interpreter, venvDir, wheelDir stri
 		progress("Using the bundled wheels; no network access needed.")
 		args = append(args, "--no-index", "--find-links", wheelDir)
 	}
-	args = append(args, PackageSpecs()...)
+	args = append(args, backend.PackageSpecs()...)
 
 	if err := stream(ctx, progress, venvPython, args...); err != nil {
 		return "", fmt.Errorf("install dependencies: %w", err)
 	}
 
-	if missing, err = MissingModules(ctx, venvPython); err != nil {
+	if missing, err = MissingModules(ctx, venvPython, backend.Modules()); err != nil {
 		return "", err
 	}
 	if len(missing) > 0 {

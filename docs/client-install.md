@@ -97,7 +97,7 @@ On a machine with no package index, mirror the wheels on a connected machine:
 ```bash
 pip download -d wheels \
   "fastapi>=0.115" "uvicorn[standard]>=0.30" "pyyaml>=6.0" "numpy>=1.26" \
-  "faster-whisper>=1.0.3" "onnxruntime>=1.18"
+  "onnxruntime>=1.18" "faster-whisper>=1.0.3"
 ```
 
 Copy the `wheels` directory next to the installed `server` folder:
@@ -106,6 +106,22 @@ Copy the `wheels` directory next to the installed `server` folder:
 - Windows — `C:\Program Files\Local Dictation\wheels`
 
 The client uses it with `--no-index` and never touches the network.
+
+**One directory per backend.** Each backend keeps its own Python environment,
+so each looks for its own wheels beside the `server` folder — `wheels` for CPU,
+`wheels-openvino` for Intel GPU, `wheels-mlx` for Apple GPU. Only the last
+package on the line differs:
+
+| Backend | Directory | Instead of `faster-whisper` |
+| --- | --- | --- |
+| CPU | `wheels` | `faster-whisper>=1.0.3` |
+| Intel GPU | `wheels-openvino` | `openvino-genai>=2025.0` |
+| Apple GPU | `wheels-mlx` | `mlx-whisper>=0.4` |
+
+Mirror the one you will use. They are kept apart because OpenVINO and
+CTranslate2 each bring their own native runtime, and resolving both into a
+single environment is how an install that worked yesterday fails to import
+today.
 
 ---
 
@@ -130,8 +146,17 @@ On a machine running a shared server, the model goes beside that install
 instead — [server-install.md](server-install.md) has the command.
 
 `large-v3-turbo` is 1.5 GB and is the right starting point on a CPU.
-`large-v3` is 2.9 GB and more accurate but several times slower. Full comparison,
-offline transfer instructions and checksum verification are in
+`large-v3` is 2.9 GB and more accurate but several times slower.
+
+**If the machine has a GPU, fetch that GPU's conversion instead** — the formats
+are not interchangeable, and the CPU one cannot be loaded onto a GPU:
+
+| Hardware | Model | Then set |
+| --- | --- | --- |
+| Apple Silicon | `large-v3-turbo-mlx` | Settings → Local server → Decode on → **Apple GPU** |
+| Intel Arc, Iris Xe | `large-v3-turbo-openvino-int8` | Settings → Local server → Decode on → **Intel GPU** |
+
+Full comparison, offline transfer instructions and checksum verification are in
 [model-setup.md](model-setup.md).
 
 ---

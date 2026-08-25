@@ -24,6 +24,14 @@ inference = [
 mlx = [
     "mlx-whisper>=0.4; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# The Intel GPU / NPU path, through OpenVINO. An optional extra rather than a
+# marked one: unlike mlx, openvino-genai publishes wheels for every platform
+# this server runs on, and the thing that decides whether it is usable is which
+# device plugins the machine has — which only the runtime can answer, and does,
+# at startup. Nobody installs this without asking for it.
+openvino = [
+    "openvino-genai>=2025.0",
+]
 # Silero VAD through onnxruntime. Without it the server falls back to the
 # energy-based detector in app/streaming/vad.py.
 vad = [

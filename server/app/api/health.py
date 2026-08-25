@@ -19,6 +19,26 @@ def _state(request: Request) -> AppState:
     return request.app.state.dictation
 
 
+def _engine(state: AppState) -> dict[str, str]:
+    """What is actually doing the decoding.
+
+    Read off the transcriber as optional attributes rather than widened into
+    the Transcriber contract: only the accelerator backends have a device worth
+    naming, and the CPU one would have to invent an answer. What matters is
+    that a client which asked for a GPU can tell from outside the process
+    whether it got one — OpenVINO will run a GPU-targeted model on the CPU
+    given the chance, and the only symptom is that dictation is slow.
+    """
+    engine: dict[str, str] = {"backend": state.backend}
+    device = getattr(state.transcriber, "device", None)
+    if device:
+        engine["device"] = str(device)
+    name = getattr(state.transcriber, "device_name", None)
+    if name and str(name) != str(device):
+        engine["device_name"] = str(name)
+    return engine
+
+
 @router.get("/health")
 async def health(request: Request) -> JSONResponse:
     """Liveness. 200 as long as the process is serving."""
@@ -42,6 +62,7 @@ async def ready(request: Request) -> JSONResponse:
         "language": state.settings.language,
         "model": state.transcriber.name,
         "draft_model": state.draft.name if state.draft else None,
+        "engine": _engine(state),
         "version": __version__,
         "protocol_version": PROTOCOL_VERSION,
         "sessions": {
@@ -70,6 +91,7 @@ async def status(request: Request) -> JSONResponse:
             "language": settings.language,
             "model": state.transcriber.name,
             "draft_model": state.draft.name if state.draft else None,
+            "engine": _engine(state),
             "version": __version__,
             "protocol_version": PROTOCOL_VERSION,
             "ready": state.ready,

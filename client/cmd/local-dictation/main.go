@@ -206,6 +206,18 @@ func checkLocalServer(ctx context.Context, settings config.Config, report func(s
 	}
 	report("server files", true, serverDir)
 
+	// Each backend reads a different conversion of the model, so this has to
+	// be known before the model is checked at all: holding an OpenVINO export
+	// to model.bin would fail a perfectly good install.
+	backend := settings.Local.Backend.Normalise()
+	if !backend.Supported() {
+		report("decoder", false, fmt.Sprintf(
+			"%s needs hardware this operating system does not have", backend.Label()))
+	} else {
+		report("decoder", true, fmt.Sprintf("%s (%s, reads %s)",
+			backend.Label(), backend.Engine(), backend.Weights()))
+	}
+
 	interpreter, err := localserver.FindPython(ctx, settings.Local.PythonPath, config.DefaultPythonCandidates())
 	if err != nil {
 		report("python", false, err.Error())
@@ -217,15 +229,20 @@ func checkLocalServer(ctx context.Context, settings config.Config, report func(s
 		report("model", false, "no model directory configured; see docs/model-setup.md")
 	} else if info, err := os.Stat(settings.Local.ModelPath); err != nil || !info.IsDir() {
 		report("model", false, fmt.Sprintf("%s is not readable; see docs/model-setup.md", settings.Local.ModelPath))
-	} else if _, err := os.Stat(filepath.Join(settings.Local.ModelPath, "model.bin")); err != nil {
-		report("model", false, fmt.Sprintf("%s has no model.bin; see docs/model-setup.md", settings.Local.ModelPath))
+	} else if _, err := os.Stat(filepath.Join(settings.Local.ModelPath, backend.Weights())); err != nil {
+		report("model", false, fmt.Sprintf("%s has no %s, which %s reads; see docs/model-setup.md",
+			settings.Local.ModelPath, backend.Weights(), backend.Label()))
 	} else {
 		report("model", true, settings.Local.ModelPath)
 	}
 
+	// The draft model runs on the same backend as the accurate one, so it has
+	// to be the same format. A CTranslate2 draft beside an OpenVINO model is a
+	// server that will not start.
 	if draft := settings.Local.DraftModelPath; draft != "" {
-		if _, err := os.Stat(filepath.Join(draft, "model.bin")); err != nil {
-			report("draft model", false, fmt.Sprintf("%s has no model.bin; see docs/latency.md", draft))
+		if _, err := os.Stat(filepath.Join(draft, backend.Weights())); err != nil {
+			report("draft model", false, fmt.Sprintf("%s has no %s; see docs/latency.md",
+				draft, backend.Weights()))
 		} else {
 			report("draft model", true, draft)
 		}

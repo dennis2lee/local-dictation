@@ -21,6 +21,7 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/config"
 	"github.com/dennis2lee/local-dictation/client/internal/dial"
 	"github.com/dennis2lee/local-dictation/client/internal/hotkey"
+	"github.com/dennis2lee/local-dictation/client/internal/localserver"
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 	"github.com/dennis2lee/local-dictation/client/internal/update"
 )
@@ -52,6 +53,8 @@ type settingsTab struct {
 	localEnglishPort *widget.Entry
 	localBox         *fyne.Container
 	localState       *widget.Label
+	backend          *widget.RadioGroup
+	backendNote      *widget.Label
 
 	koreanLED  *led
 	englishLED *led
@@ -221,13 +224,30 @@ func (s *settingsTab) buildLocalServerSection(settings config.Config) fyne.Canva
 	s.localState = widget.NewLabel("The server starts the first time you dictate.")
 	s.localState.Wrapping = fyne.TextWrapWord
 
+	s.backendNote = inlineCaption("")
+	s.backend = widget.NewRadioGroup(backendLabels(), s.onBackendChanged)
+	s.backend.Horizontal = true
+	s.backend.SetSelected(localserver.Backend(settings.Local.Backend).Normalise().Label())
+	s.onBackendChanged(s.backend.Selected)
+
+	items := []*widget.FormItem{
+		widget.NewFormItem("Model directory", s.modelPath),
+		widget.NewFormItem("Draft model directory", s.draftPath),
+		widget.NewFormItem("Silero VAD file", s.vadPath),
+	}
+	// Offered only where there is a choice to make. On a machine with one
+	// usable backend the radio would be a single option that cannot be
+	// unselected, which reads as a setting and is not one.
+	if len(backendLabels()) > 1 {
+		items = append([]*widget.FormItem{widget.NewFormItem("Decode on", s.backend)}, items...)
+	}
+
 	s.localBox = container.NewVBox(
-		widget.NewForm(
-			widget.NewFormItem("Model directory", s.modelPath),
-			widget.NewFormItem("Draft model directory", s.draftPath),
-			widget.NewFormItem("Silero VAD file", s.vadPath),
-		),
-		widget.NewLabel("Models are not installed with the app. See docs/model-setup.md."),
+		widget.NewForm(items...),
+		// The doc pointer lives in backendNote rather than on a line of its
+		// own: each backend reads a different conversion, so "which model" and
+		// "where to get one" are the same sentence.
+		s.backendNote,
 		s.localState,
 	)
 
@@ -766,8 +786,21 @@ func (s *settingsTab) say(text string) {
 }
 
 func (s *settingsTab) onSave() {
-	settings := s.app.Settings()
+	settings := s.collect(s.app.Settings())
+	if err := s.app.ApplySettings(settings); err != nil {
+		s.say(err.Error())
+		dialog.ShowError(err, s.app.window)
+		return
+	}
+	s.say("Settings saved.")
+}
 
+// collect reads every group's widgets onto a copy of the settings.
+//
+// Separate from onSave so that what the tabs produce can be checked without an
+// App behind them: applying settings writes a file, restarts servers and
+// re-registers the shortcut, none of which a test of the form wants.
+func (s *settingsTab) collect(settings config.Config) config.Config {
 	settings.Mode = modeFromLabel(s.mode.Selected)
 	settings.Remote.Host = s.host.Text
 	settings.Remote.KoreanPort = parsePort(s.koreanPort.Text)
@@ -782,6 +815,7 @@ func (s *settingsTab) onSave() {
 	settings.Local.VadModelPath = s.vadPath.Text
 	settings.Local.PythonPath = s.pythonPath.Text
 	settings.Local.CPUThreads = parsePort(s.cpuThreads.Text)
+	settings.Local.Backend = backendFor(s.backend.Selected)
 	settings.Local.KoreanPort = parsePort(s.localKoreanPort.Text)
 	settings.Local.EnglishPort = parsePort(s.localEnglishPort.Text)
 
@@ -790,13 +824,7 @@ func (s *settingsTab) onSave() {
 	settings.Hotkey = s.shortcutFromForm()
 	settings.Input.LivePreview = s.livePreview.Checked
 	settings.Audio.Gain = audio.ClampGain(s.gain.Value)
-
-	if err := s.app.ApplySettings(settings); err != nil {
-		s.say(err.Error())
-		dialog.ShowError(err, s.app.window)
-		return
-	}
-	s.say("Settings saved.")
+	return settings
 }
 
 // setEditable locks the tab while dictation is running, matching the plan's
@@ -804,8 +832,8 @@ func (s *settingsTab) onSave() {
 func (s *settingsTab) setEditable(editable bool) {
 	widgets := []fyne.Disableable{
 		s.mode, s.host, s.koreanPort, s.englishPort, s.useTLS, s.caCert,
-		s.clientCert, s.clientKey, s.modelPath, s.draftPath, s.vadPath, s.pythonPath,
-		s.cpuThreads, s.localKoreanPort, s.localEnglishPort,
+		s.clientCert, s.clientKey, s.backend, s.modelPath, s.draftPath, s.vadPath,
+		s.pythonPath, s.cpuThreads, s.localKoreanPort, s.localEnglishPort,
 		s.microphone, s.testButton, s.shortcutKey, s.saveButton,
 	}
 	for _, check := range s.modifierChecks {
@@ -871,4 +899,50 @@ func sortStrings(values []string) {
 			values[j], values[j-1] = values[j-1], values[j]
 		}
 	}
+}
+
+// -- choosing the hardware -------------------------------------------------
+
+// backendLabels are the backends this machine could actually run, in the order
+// they are offered. A choice the operating system can never satisfy is worse
+// than no choice: it fails at the first attempt to dictate, long after it was
+// made, and the message arrives from a Python process.
+func backendLabels() []string {
+	var labels []string
+	for _, backend := range localserver.Backends() {
+		if backend.Supported() {
+			labels = append(labels, backend.Label())
+		}
+	}
+	return labels
+}
+
+// backendFor maps a label back onto the setting. An unrecognised label means
+// the CPU, which is the one every machine has.
+func backendFor(label string) localserver.Backend {
+	for _, backend := range localserver.Backends() {
+		if backend.Label() == label {
+			return backend
+		}
+	}
+	return localserver.BackendCPU
+}
+
+// onBackendChanged says which model conversion the chosen backend reads.
+//
+// The three are not interchangeable and they live under similar directory
+// names, so the mistake to head off is pointing all of them at the same
+// folder. Saying it here costs one line; finding it out costs a failed start
+// and a message about an XML parse.
+func (s *settingsTab) onBackendChanged(label string) {
+	backend := backendFor(label)
+	switch backend {
+	case localserver.BackendIntelGPU:
+		s.backendNote.SetText("OpenVINO. Reads openvino_encoder_model.xml — see docs/model-setup.md.")
+	case localserver.BackendAppleGPU:
+		s.backendNote.SetText("MLX. Reads weights.safetensors — see docs/model-setup.md.")
+	default:
+		s.backendNote.SetText("CTranslate2. Reads model.bin — see docs/model-setup.md.")
+	}
+	s.backendNote.Refresh()
 }

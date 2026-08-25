@@ -54,4 +54,9 @@ def create_transcriber(settings: ModelSettings, *, backend: str = "whisper") -> 
 
         return MLXTranscriber(settings)
 
+    if backend == "openvino":
+        from app.inference.openvino import OpenVINOTranscriber
+
+        return OpenVINOTranscriber(settings)
+
     raise ValueError(f"unknown inference backend: {backend!r}")

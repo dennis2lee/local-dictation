@@ -81,7 +81,7 @@ finding one setting does not mean scrolling past all of them:
 | Tab | What is on it |
 | --- | --- |
 | **Server** | Which server to use, its address, and the connection test |
-| **Local server** | Where the models are, for the server this app runs itself |
+| **Local server** | What decodes, and where the models are, for the server this app runs itself |
 | **Advanced** | Python, threads and ports for that same built-in server |
 | **Microphone** | Device, level meter and input gain |
 | **Typing** | The shortcut, and when words are typed |
@@ -118,6 +118,33 @@ clear, the answer is usually an SSH tunnel rather than certificates — the
 [server install guide](server-install.md#serving-other-machines) has the
 command. Connect to `127.0.0.1` and leave TLS off; SSH is already doing both
 jobs.
+
+### Local server
+
+**Decode on** chooses the hardware. It appears only where there is more than
+one answer, and the choices are whatever this machine could actually run:
+
+| | Where | What it uses |
+| --- | --- | --- |
+| **CPU** | Everywhere | faster-whisper. The default, and what every install had before this setting existed. |
+| **Intel GPU** | Windows, Linux | OpenVINO. For an Intel Arc GPU — a 140V in a Lunar Lake laptop, or a card. |
+| **Apple GPU** | macOS | MLX. For Apple Silicon. |
+
+**Each one reads a different model**, and the three are not interchangeable.
+The line under the selector says which file the chosen one wants;
+[model-setup.md](model-setup.md) has the command to fetch it. Switching the
+selector does not move or delete anything, so a machine can hold both and you
+change the **Model directory** field to match.
+
+Neither GPU option falls back to the CPU when the hardware is not there. A
+missing GPU, driver or plugin is an error at the first attempt to dictate,
+naming what was missing — because a GPU backend silently decoding on the CPU
+looks exactly like a slow computer, and there is nothing on screen to
+distinguish them.
+
+Each backend keeps its own Python environment, so switching to one for the
+first time installs its dependencies before the first session. That happens
+once.
 
 ### Microphone
 
@@ -250,7 +277,9 @@ Run the self-check:
 ```
 
 It names the missing piece. The two common answers are macOS Accessibility
-permission and a missing model.
+permission and a missing model — and `--check` holds the model directory to
+whatever **Decode on** is set to, so a model that was fine yesterday reading
+`FAIL` today usually means the backend changed and the directory did not.
 
 ### Dictation stopped when I clicked somewhere else
 

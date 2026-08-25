@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/dennis2lee/local-dictation/client/internal/localserver"
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 )
 
@@ -86,6 +87,15 @@ type Local struct {
 	StartBothLanguages bool `json:"start_both_languages"`
 	// MaxSessions and CPUThreads are passed through to the generated config.
 	CPUThreads int `json:"cpu_threads"`
+	// Backend is the hardware the server decodes on: "cpu" (the default,
+	// everywhere), "intel-gpu" (OpenVINO — Intel Arc, Windows and Linux), or
+	// "apple-gpu" (MLX — Apple Silicon).
+	//
+	// Empty means "cpu", which is what every settings file written before this
+	// field existed means. Each backend reads a different conversion of the
+	// model, so changing this usually means changing ModelPath too — the
+	// server says which file it wanted when it does not find one.
+	Backend localserver.Backend `json:"backend"`
 }
 
 // Audio selects the capture device.
@@ -367,6 +377,16 @@ func (c Config) Validate() error {
 		}
 		if c.Local.CPUThreads < 0 {
 			problems = append(problems, "CPU threads cannot be negative")
+		}
+		if !c.Local.Backend.Valid() {
+			problems = append(problems, fmt.Sprintf(
+				"local.backend must be cpu, intel-gpu or apple-gpu, got %q", c.Local.Backend))
+		} else if !c.Local.Backend.Supported() {
+			// Not a typo but not runnable here either, and the failure would
+			// otherwise arrive at the first attempt to dictate.
+			problems = append(problems, fmt.Sprintf(
+				"local.backend %q needs hardware this operating system does not have",
+				c.Local.Backend))
 		}
 	}
 

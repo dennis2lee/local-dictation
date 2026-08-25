@@ -50,6 +50,10 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/pip install --quiet -e '.[dev]'
+          # Same reason as in test.yml: without it the OpenVINO backend's
+          # device and model-format refusals skip, and those need no GPU.
+          .venv/bin/pip install --quiet -e '.[openvino]' || \
+            echo "openvino-genai unavailable on this runner; its tests will skip"
           .venv/bin/python -m pytest -q
 
   test-client:

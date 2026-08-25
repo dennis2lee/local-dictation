@@ -7,15 +7,16 @@ differently. Installing one is a single command.
 The same Whisper weights come in different formats, and which one you want
 depends on how the server will decode. Most of this page is about the
 **CTranslate2** conversions, which is what `faster-whisper` loads and what every
-platform can run. On an Apple Silicon Mac there is a second option, **MLX**,
-which is the only route to the GPU. Neither backend reads the other's files.
+platform can run. There are two GPU alternatives, each the only route to the
+GPU on its hardware: **MLX** on an Apple Silicon Mac, and **OpenVINO** on an
+Intel GPU. No backend reads another's files.
 
 Whichever you pick, it is a local directory. The plain `openai/whisper-*`
-repositories are PyTorch checkpoints and will not work with either.
+repositories are PyTorch checkpoints and will not work with any of them.
 
 ## Which model
 
-Four things are downloadable, and a normal install needs one or two of them.
+Several things are downloadable, and a normal install needs one or two of them.
 
 | | What it is | Size | Setting |
 | --- | --- | --- | --- |
@@ -23,14 +24,20 @@ Four things are downloadable, and a normal install needs one or two of them.
 | `large-v3` | More accurate, several times slower. | 2.9 GiB | `model.path` |
 | `base` | Draft model — live partial text only, never committed. | 140 MiB | `model.draft_path` |
 | `large-v3-turbo-mlx` | `large-v3-turbo` again, for the Apple Silicon GPU. | 1.5 GiB | `model.path`, with `--backend mlx` |
+| `large-v3-turbo-openvino-int8` | `large-v3-turbo` again, for an Intel GPU. | 790 MiB | `model.path`, with `--backend openvino` |
+
+`large-v3-turbo-openvino-fp16` and `-int4` are the same model at other
+precisions — see [`large-v3-turbo-openvino-*`](#large-v3-turbo-openvino-on-an-intel-gpu).
 
 **Start here:**
 
-- **On Linux or Windows** — `large-v3-turbo`, then `base` alongside it. That
-  second one is small and it is the difference between text appearing in five
-  seconds and in one.
+- **On Linux or Windows with no usable GPU** — `large-v3-turbo`, then `base`
+  alongside it. That second one is small and it is the difference between text
+  appearing in five seconds and in one.
 - **On an Apple Silicon Mac** — `large-v3-turbo-mlx` on its own. The GPU is fast
   enough that no draft model is needed.
+- **On a machine with an Intel GPU** — `large-v3-turbo-openvino-int8` on its
+  own, and measure before adding a draft model. See below.
 
 Every download also fetches `silero_vad.onnx` (2.2 MiB), which is how the server
 decides an utterance has ended.
@@ -110,9 +117,56 @@ Then point `model.path` at the MLX directory, clear `model.draft_path`, and
 start the server with `LD_BACKEND=mlx`. See
 [Choosing a backend](server-usage.md#choosing-a-backend).
 
-The two conversions are not interchangeable: `model.bin` is the CTranslate2 one
-and `weights.safetensors` the MLX one. Each backend refuses the other's
-directory at startup, and `check` catches it before a restart.
+The three conversions are not interchangeable: `model.bin` is the CTranslate2
+one, `weights.safetensors` the MLX one and `openvino_encoder_model.xml` the
+OpenVINO one. Each backend refuses the others' directories at startup, and
+`check` catches it before a restart.
+
+### `large-v3-turbo-openvino-*`, on an Intel GPU
+
+The same weights a third time, exported to OpenVINO IR. This is the only way to
+reach an Intel GPU — an Arc 140V in a Lunar Lake laptop, an Arc card, an older
+Iris Xe — because CTranslate2 has no Intel GPU backend either.
+
+Three precisions are published, and **which one to install is a measurement,
+not a preference**:
+
+| | Size | What it is for |
+| --- | --- | --- |
+| `large-v3-turbo-openvino-int8` | 790 MiB | The expected answer. Start here. |
+| `large-v3-turbo-openvino-fp16` | 1.6 GiB | The accuracy reference to compare against. |
+| `large-v3-turbo-openvino-int4` | 600 MiB | Smallest and fastest, and the one most likely to cost Korean accuracy. |
+
+Quantisation costs accuracy in a way only real speech shows, and in a Korean or
+mixed Korean/English transcript it shows before it shows in English. So install
+at least INT8 and FP16, and compare them on your own clips before settling:
+
+```bash
+./scripts/openvino-benchmark.py --models "$PREFIX/models" --device GPU
+```
+
+That reports decode time and real-time factor per precision, and nothing about
+accuracy — a real-time factor under 0.25 is the target. For accuracy, run
+[`benchmark.py`](server-usage.md) with a manifest of Korean clips against a
+server on each precision and read CER. If INT4 is meaningfully worse, it is not
+the one to ship, however fast it is.
+
+**No draft model to begin with.** On CPU the `base` draft is what brings the
+first partial under a second, but it exists to hide a 3.2 s decode. If the GPU
+decodes fast enough there is nothing to hide, and one model instead of two is
+less memory, a shorter start and no disagreement between the partial text and
+the committed text. Add a draft only if the measurement says to — and if it
+does, it needs to be an OpenVINO export as well, because the draft runs on the
+same backend as the accurate model.
+
+Then point `model.path` at the export, set `model.device` to `GPU`, and start
+the server with `--backend openvino`. In the client that is **Settings → Local
+server → Decode on → Intel GPU**.
+
+**It will not quietly fall back to the CPU.** A machine with no Intel GPU, a
+missing graphics driver or a missing OpenVINO GPU plugin is a startup error
+naming the devices OpenVINO did find. That is deliberate: a GPU backend
+silently decoding on the CPU looks exactly like a slow computer.
 
 ## Linux and macOS
 
@@ -256,6 +310,8 @@ Whisper weights are released by OpenAI under the MIT licence. The CTranslate2
 conversions used here are redistributions of those weights: `large-v3` from
 `Systran/faster-whisper-large-v3`, `large-v3-turbo` from
 `deepdml/faster-whisper-large-v3-turbo-ct2`, `base` from
-`Systran/faster-whisper-base`, and the MLX conversion from
-`mlx-community/whisper-large-v3-turbo`. Silero VAD is MIT licensed. Check
+`Systran/faster-whisper-base`, the MLX conversion from
+`mlx-community/whisper-large-v3-turbo`, and the OpenVINO exports from
+`OpenVINO/whisper-large-v3-turbo-{int8,fp16,int4}-ov`. Silero VAD is MIT
+licensed. Check
 each repository's card before redistributing anything internally.
