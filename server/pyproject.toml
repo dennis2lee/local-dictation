@@ -1,6 +1,6 @@
 [project]
 name = "local-dictation-server"
-version = "0.1.24"
+version = "0.1.25"
 description = "Offline Korean/English dictation server (Whisper large-v3, CPU INT8)"
 requires-python = ">=3.11"
 license = {text = "Proprietary"}
