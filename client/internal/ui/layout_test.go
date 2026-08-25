@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"context"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
@@ -11,6 +14,7 @@ import (
 
 	"github.com/dennis2lee/local-dictation/client/internal/audio"
 	"github.com/dennis2lee/local-dictation/client/internal/config"
+	"github.com/dennis2lee/local-dictation/client/internal/models"
 )
 
 // The dot floated above the middle of the words beside it, because HBox
@@ -173,6 +177,14 @@ func TestEverySettingsGroupFitsTheWindow(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s: group content is %T, not a scroll", item.Text, item.Content)
 			}
+			if item.Text == "Models" {
+				// The one group that is a list rather than a form. It grows
+				// with the catalogue, so holding it to the window would mean
+				// never adding a model. What it owes instead is that the
+				// models the chosen backend needs are above the fold — see
+				// TestTheModelsYouNeedAreVisibleWithoutScrolling.
+				continue
+			}
 			wanted := scroll.Content.MinSize().Height
 			if over := wanted - scroll.Size().Height; over > 0 {
 				t.Errorf("%s mode: the %q group wants %.0fpx and has %.0f, so %.0f is behind a scroll",
@@ -209,20 +221,84 @@ func TestSaveIsReachableFromEverySettingsGroup(t *testing.T) {
 // A settings tab with no audio backend behind it.
 func newTestSettingsTab(app *App, settings config.Config) *settingsTab {
 	tab := &settingsTab{app: app, modifierChecks: map[string]*widget.Check{}}
+	// Never the real one: it downloads gigabytes.
+	tab.installModel = func(context.Context, models.Model, string, func(models.Progress)) error {
+		return nil
+	}
 	tab.listDevices = func() ([]audio.Device, error) {
 		return []audio.Device{{ID: "1", Name: "MacBook Air Microphone"}}, nil
 	}
 	tab.message = widget.NewLabel("")
 	tab.message.Wrapping = fyne.TextWrapWord
 	tab.message.Hide()
-	tab.groups = container.NewAppTabs(
-		container.NewTabItem("Server", group(tab.buildServerSection(settings))),
-		container.NewTabItem("Local server", group(tab.buildLocalServerSection(settings))),
-		container.NewTabItem("Advanced", group(tab.buildAdvancedSection(settings))),
-		container.NewTabItem("Microphone", group(tab.buildMicrophoneSection(settings))),
-		container.NewTabItem("Typing", group(tab.buildShortcutSection(settings))),
-		container.NewTabItem("Updates", group(tab.buildUpdateSection(settings))),
-	)
+	// The real one, not a copy: a second list here is a list that drifts.
+	tab.groups = tab.buildGroups(settings)
 	tab.actions = tab.buildActions()
 	return tab
+}
+
+// Every settings group has to be one click away.
+//
+// Adding the Models tab took the row to seven, which stopped fitting across a
+// 560px window: Fyne folded the overflow into a "…" menu and Updates — the tab
+// that installs the fix for whatever brought someone here — was behind it. The
+// tab bar is the one piece of navigation in the app, so it is worth holding to
+// the window rather than letting the window grow to it.
+func TestEverySettingsGroupIsOneClickAway(t *testing.T) {
+	settings := testSettings()
+	app := halfBuiltApp(settings)
+	test.ApplyTheme(t, planTheme{})
+
+	tab := newTestSettingsTab(app, settings)
+	outer := container.NewAppTabs(
+		container.NewTabItem("Main", widget.NewLabel("")),
+		container.NewTabItem("Settings", tab.content()),
+	)
+	outer.SelectIndex(1)
+	window := test.NewWindow(outer)
+	defer window.Close()
+	window.Resize(fyne.NewSize(windowWidth, windowHeight))
+
+	// Fyne signals overflow by rendering an icon-only button beside the tabs
+	// that opens the rest as a menu. Asking the AppTabs for its MinSize does
+	// not show it: the renderer drops tabs until the bar fits, so the answer
+	// is always "it fits".
+	if overflowing(tab.groups) {
+		var names []string
+		for _, item := range tab.groups.Items {
+			names = append(names, item.Text)
+		}
+		t.Errorf("the %d group tabs (%s) do not fit across a %dpx window, so some are behind a \"…\" menu",
+			len(tab.groups.Items), strings.Join(names, ", "), windowWidth)
+	}
+}
+
+// overflowing reports whether the tab bar folded any tab into its menu.
+func overflowing(tabs *container.AppTabs) bool {
+	labelled := map[string]bool{}
+	for _, item := range tabs.Items {
+		labelled[item.Text] = true
+	}
+	// A tab button is an unexported type, so it is found by the canvas text it
+	// draws its name with. A tab folded into the overflow menu is not laid out
+	// in the bar at all, so its name is simply absent.
+	found := map[string]bool{}
+	walk(test.WidgetRenderer(tabs).Objects(), func(object fyne.CanvasObject) {
+		if text, ok := object.(*canvas.Text); ok && labelled[text.Text] {
+			found[text.Text] = true
+		}
+	})
+	return len(found) < len(labelled)
+}
+
+func walk(objects []fyne.CanvasObject, visit func(fyne.CanvasObject)) {
+	for _, object := range objects {
+		visit(object)
+		switch typed := object.(type) {
+		case *fyne.Container:
+			walk(typed.Objects, visit)
+		case fyne.Widget:
+			walk(test.WidgetRenderer(typed).Objects(), visit)
+		}
+	}
 }

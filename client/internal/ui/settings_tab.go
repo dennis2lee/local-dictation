@@ -22,6 +22,7 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/dial"
 	"github.com/dennis2lee/local-dictation/client/internal/hotkey"
 	"github.com/dennis2lee/local-dictation/client/internal/localserver"
+	"github.com/dennis2lee/local-dictation/client/internal/models"
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 	"github.com/dennis2lee/local-dictation/client/internal/update"
 )
@@ -55,6 +56,16 @@ type settingsTab struct {
 	localState       *widget.Label
 	backend          *widget.RadioGroup
 	backendNote      *widget.Label
+
+	// The Models group. installModel is a seam: the real one downloads
+	// gigabytes over the network, which no test should.
+	modelsBox      *fyne.Container
+	modelsWhere    *widget.Label
+	modelsStatus   *widget.Label
+	modelsProgress *widget.ProgressBar
+	installing     bool
+	cancelInstall  context.CancelFunc
+	installModel   func(context.Context, models.Model, string, func(models.Progress)) error
 
 	koreanLED  *led
 	englishLED *led
@@ -117,16 +128,31 @@ func newSettingsTab(app *App) *settingsTab {
 	// window had to be tall to make that bearable. Split, the tallest group is
 	// around a third of that, and the window is sized to the tallest group
 	// instead of to the sum.
-	tab.groups = container.NewAppTabs(
-		container.NewTabItem("Server", group(tab.buildServerSection(settings))),
-		container.NewTabItem("Local server", group(tab.buildLocalServerSection(settings))),
-		container.NewTabItem("Advanced", group(tab.buildAdvancedSection(settings))),
-		container.NewTabItem("Microphone", group(tab.buildMicrophoneSection(settings))),
-		container.NewTabItem("Typing", group(tab.buildShortcutSection(settings))),
-		container.NewTabItem("Updates", group(tab.buildUpdateSection(settings))),
-	)
+	tab.groups = tab.buildGroups(settings)
 	tab.actions = tab.buildActions()
 	return tab
+}
+
+// buildGroups is the tab row and everything in it.
+//
+// Separate from newSettingsTab so the layout tests can build the real thing.
+// They used to keep their own copy of this list, which meant a group could be
+// added — or a tab renamed until the row no longer fitted — with every test
+// still measuring the old set and passing.
+//
+// Names are short on purpose: seven of them have to fit across the window, and
+// Fyne answers a row that does not fit by folding the last tabs into a "…"
+// menu rather than by complaining.
+func (s *settingsTab) buildGroups(settings config.Config) *container.AppTabs {
+	return container.NewAppTabs(
+		container.NewTabItem("Server", group(s.buildServerSection(settings))),
+		container.NewTabItem("Local", group(s.buildLocalServerSection(settings))),
+		container.NewTabItem("Models", group(s.buildModelsSection(settings))),
+		container.NewTabItem("Advanced", group(s.buildAdvancedSection(settings))),
+		container.NewTabItem("Audio", group(s.buildMicrophoneSection(settings))),
+		container.NewTabItem("Typing", group(s.buildShortcutSection(settings))),
+		container.NewTabItem("Updates", group(s.buildUpdateSection(settings))),
+	)
 }
 
 func (s *settingsTab) content() fyne.CanvasObject {
@@ -952,6 +978,12 @@ func backendFor(label string) localserver.Backend {
 // folder. Saying it here costs one line; finding it out costs a failed start
 // and a message about an XML parse.
 func (s *settingsTab) onBackendChanged(label string) {
+	// Deferred rather than called at the end: the warning path below returns
+	// early, and that path is exactly the one where the Models list is most
+	// worth re-sorting — the backend has just changed to one the configured
+	// directory cannot serve, so its models are what someone needs next.
+	defer s.modelsFollowBackend()
+
 	backend := backendFor(label)
 	if problem := modelProblem(backend, s.modelPath.Text); problem != "" {
 		// Said here rather than left for the first attempt to dictate. The
@@ -973,6 +1005,16 @@ func (s *settingsTab) onBackendChanged(label string) {
 	}
 	s.backendNote.Importance = widget.LowImportance
 	s.backendNote.Refresh()
+}
+
+// modelsFollowBackend re-sorts the Models group when the backend changes: its
+// first heading names the chosen one, and the list under it is what that
+// backend can read.
+func (s *settingsTab) modelsFollowBackend() {
+	if s.modelsBox == nil {
+		return // the Models group is built after this one
+	}
+	s.refreshModels()
 }
 
 // modelProblem reports why the configured directory cannot serve this backend,

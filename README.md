@@ -87,8 +87,7 @@ costs the same whether it covers three seconds or ten — about 3.2 s for
 `large-v3-turbo` on eight CPU cores. That fixed cost is the floor on how quickly
 partial text can appear, and it is well above the 2 s target.
 
-Setting `model.draft_path` to a small model — in the app, **Settings → Local
-server → Draft model directory** — changes the picture completely. Partials
+Setting `model.draft_path` to a small model — in the app, **Settings → Local → Draft model directory** — changes the picture completely. Partials
 come from the draft; the accurate model decodes each utterance once, at the
 end, and only its reading is ever committed.
 

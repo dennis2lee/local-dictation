@@ -198,8 +198,8 @@ if ($Model -eq 'base') {
 elseif ($Model -like 'large-v3-turbo-openvino-*') {
     Write-Host ''
     Write-Host 'an OpenVINO export, for an Intel GPU. In the client:'
-    Write-Host '  Settings > Local server > Decode on > Intel GPU'
-    Write-Host "  Settings > Local server > Model directory > $Dest\$Model"
+    Write-Host '  Settings > Local > Decode on > Intel GPU'
+    Write-Host "  Settings > Local > Model directory > $Dest\$Model"
     Write-Host ''
     Write-Host 'Point Model directory at this one, not at large-v3-turbo - that is the'
     Write-Host 'CPU conversion and this backend cannot read it.'

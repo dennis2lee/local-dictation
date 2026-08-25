@@ -127,7 +127,13 @@ today.
 
 ## 3. Install a speech model
 
-Nothing works without this step. One command:
+Nothing works without this step, and the easiest place to do it is inside the
+app: **Settings → Models** lists every model, marks the ones this machine still
+needs in red, and downloads them. It also says which directory they go in, so
+nothing has to be pointed at afterwards.
+
+The rest of this section is the same job from a terminal, which is what an
+offline or scripted install wants:
 
 ### macOS
 
@@ -153,8 +159,8 @@ are not interchangeable, and the CPU one cannot be loaded onto a GPU:
 
 | Hardware | Model | Then set |
 | --- | --- | --- |
-| Apple Silicon | `large-v3-turbo-mlx` | Settings → Local server → Decode on → **Apple GPU** |
-| Intel Arc, Iris Xe | `large-v3-turbo-openvino-int8` | Settings → Local server → Decode on → **Intel GPU** |
+| Apple Silicon | `large-v3-turbo-mlx` | Settings → Local → Decode on → **Apple GPU** |
+| Intel Arc, Iris Xe | `large-v3-turbo-openvino-int8` | Settings → Local → Decode on → **Intel GPU** |
 
 Full comparison, offline transfer instructions and checksum verification are in
 [model-setup.md](model-setup.md).

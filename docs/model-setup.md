@@ -4,6 +4,11 @@ Neither the server package nor the client installers contain a model. They are
 several gigabytes, they carry their own licence, and every site mirrors them
 differently. Installing one is a single command.
 
+**Using the desktop client?** **Settings → Models** does everything on this page
+except the offline transfer: it lists what is installed, marks what is missing,
+and fetches it. This page is for a server you run yourself, for an air-gapped
+install, or for anyone who would rather see the command.
+
 The same Whisper weights come in different formats, and which one you want
 depends on how the server will decode. Most of this page is about the
 **CTranslate2** conversions, which is what `faster-whisper` loads and what every
@@ -160,8 +165,7 @@ does, it needs to be an OpenVINO export as well, because the draft runs on the
 same backend as the accurate model.
 
 Then point `model.path` at the export, set `model.device` to `GPU`, and start
-the server with `--backend openvino`. In the client that is **Settings → Local
-server → Decode on → Intel GPU**.
+the server with `--backend openvino`. In the client that is **Settings → Local → Decode on → Intel GPU**.
 
 **It will not quietly fall back to the CPU.** A machine with no Intel GPU, a
 missing graphics driver or a missing OpenVINO GPU plugin is a startup error
@@ -233,7 +237,7 @@ backend cannot read the one above:
 .\fetch-model.ps1 -Model large-v3-turbo-openvino-int8
 ```
 
-Then set **Settings → Local server → Decode on** to **Intel GPU** and point
+Then set **Settings → Local → Decode on** to **Intel GPU** and point
 **Model directory** at the directory it just wrote. Leaving the directory
 pointing at `large-v3-turbo` is the mistake to avoid; the client says so as soon
 as the backend is chosen, rather than waiting for the first attempt to dictate.

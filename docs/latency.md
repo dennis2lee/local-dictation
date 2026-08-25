@@ -72,7 +72,7 @@ mv /opt/local-dictation/models/large-v3 /opt/local-dictation/models/base
 `base` is 145 MB and adds roughly 200 MB of resident memory.
 
 In standalone mode the same thing is one field in the app: put the small
-model's directory in **Settings → Local server → Draft model directory** and
+model's directory in **Settings → Local → Draft model directory** and
 save. The client passes it through to the server it starts, and **Test
 connections** confirms it with "drafting with …".
 

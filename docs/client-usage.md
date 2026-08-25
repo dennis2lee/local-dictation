@@ -81,9 +81,10 @@ finding one setting does not mean scrolling past all of them:
 | Tab | What is on it |
 | --- | --- |
 | **Server** | Which server to use, its address, and the connection test |
-| **Local server** | What decodes, and where the models are, for the server this app runs itself |
+| **Local** | What decodes, and where the models are, for the server this app runs itself |
+| **Models** | Which models are installed, which are missing, and a button that fetches them |
 | **Advanced** | Python, threads and ports for that same built-in server |
-| **Microphone** | Device, level meter and input gain |
+| **Audio** | Microphone, level meter and input gain |
 | **Typing** | The shortcut, and when words are typed |
 | **Updates** | The installed version, and checking for a newer one |
 
@@ -119,7 +120,7 @@ clear, the answer is usually an SSH tunnel rather than certificates — the
 command. Connect to `127.0.0.1` and leave TLS off; SSH is already doing both
 jobs.
 
-### Local server
+### Local
 
 **Decode on** chooses the hardware. It appears only where there is more than
 one answer, and the choices are whatever this machine could actually run:
@@ -146,7 +147,52 @@ Each backend keeps its own Python environment, so switching to one for the
 first time installs its dependencies before the first session. That happens
 once.
 
-### Microphone
+### Models
+
+Nothing here works without a speech model, and none is included in any
+installer — they are gigabytes and carry their own licence. This tab is where
+they are installed and where you can see which already are.
+
+Models for the backend chosen on the **Local** tab come first, under a heading
+naming it. The rest are listed below, because "what have I already downloaded"
+is the other half of the question.
+
+| Colour | What it means |
+| --- | --- |
+| Green | Installed. |
+| Red | This backend has nothing it can decode with. Dictation will not start until one of these arrives. |
+| Plain | Not installed, and not needed: an alternative to something you already have, optional, or for another backend. |
+
+Only one red row has to be fixed, not all of them. `large-v3-turbo` and
+`large-v3` both serve the CPU — installing either clears it.
+
+**Download** fetches one. The line at the top says which directory they go in:
+whichever one **Model directory** on the **Local** tab already names, so a
+download lands where this app is looking rather than where a script's default
+would have put it.
+
+An interrupted download leaves nothing behind. Files are staged and only moved
+into place once the whole set has arrived, so a model is either installed or it
+is not — never a directory that looks right and fails to load. A download that
+replaces a working model keeps the old one until the new one is complete.
+
+When you download the accurate model for the backend you have chosen, and
+**Model directory** was pointing somewhere that backend cannot read, the field
+is moved to the new model. It is not saved for you — press **Save**.
+
+The draft model (`base`) is worth having on a CPU and is listed as optional
+because it is: it produces only the live text and nothing that is kept. On a
+GPU, measure before adding it — see [latency.md](latency.md).
+
+`silero_vad.onnx` decides when you have stopped speaking. Without it the server
+falls back to a plain loudness threshold, which is worse but still works.
+
+Everything here can also be done from a terminal with `fetch-model.sh` or
+`fetch-model.ps1` — [model-setup.md](model-setup.md) has those, plus offline
+transfer and checksum verification. The two write the same files and the same
+`SHA256SUMS`, so a model fetched either way verifies with either.
+
+### Audio
 
 Pick a device, then press **Test microphone** and speak. The meter beside it
 should light up. Press it again to stop.
@@ -299,7 +345,7 @@ session, so the warning above about where text lands applies.
 
 The microphone is probably muted, set to a device that is not picking you up, or
 turned down too far. Stop dictating and use **Test microphone** on the
-**Microphone** tab. If no segments light while you speak, the problem is the
+**Audio** tab. If no segments light while you speak, the problem is the
 device, not the transcription. If a few light but the meter barely leaves the
 left end, raise **Input level** until you are in the green with the odd amber
 peak.
