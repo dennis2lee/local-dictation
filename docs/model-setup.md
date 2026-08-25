@@ -223,8 +223,22 @@ installed `server\scripts` directory:
 ```
 
 The second one is the draft model, and on a Windows laptop decoding on the CPU
-it is the difference between text appearing in five seconds and in one. There is
-no MLX option here — that is Apple Silicon only.
+it is the difference between text appearing in five seconds and in one.
+
+**On a machine with an Intel GPU, fetch the OpenVINO export instead** — and
+instead is the word, because the two are different formats and the Intel GPU
+backend cannot read the one above:
+
+```powershell
+.\fetch-model.ps1 -Model large-v3-turbo-openvino-int8
+```
+
+Then set **Settings → Local server → Decode on** to **Intel GPU** and point
+**Model directory** at the directory it just wrote. Leaving the directory
+pointing at `large-v3-turbo` is the mistake to avoid; the client says so as soon
+as the backend is chosen, rather than waiting for the first attempt to dictate.
+
+There is no MLX option here — that is Apple Silicon only.
 
 The default destination is `%LOCALAPPDATA%\LocalDictation\models`, which is where
 the client looks in standalone mode.

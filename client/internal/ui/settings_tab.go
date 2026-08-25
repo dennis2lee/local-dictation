@@ -225,7 +225,15 @@ func (s *settingsTab) buildLocalServerSection(settings config.Config) fyne.Canva
 	s.localState.Wrapping = fyne.TextWrapWord
 
 	s.backendNote = inlineCaption("")
+	// Wraps, unlike most captions: it carries a sentence about what is wrong
+	// with the configured directory, and a caption that will not wrap draws it
+	// off the right-hand edge where the half that says what to do is the half
+	// that goes missing.
+	s.backendNote.Wrapping = fyne.TextWrapWord
 	s.backend = widget.NewRadioGroup(backendLabels(), s.onBackendChanged)
+	// Either half of the pairing can be the one that changes, and a note that
+	// only tracked one of them would go stale the moment the other moved.
+	s.modelPath.OnChanged = func(string) { s.onBackendChanged(s.backend.Selected) }
 	s.backend.Horizontal = true
 	s.backend.SetSelected(localserver.Backend(settings.Local.Backend).Normalise().Label())
 	s.onBackendChanged(s.backend.Selected)
@@ -792,6 +800,15 @@ func (s *settingsTab) onSave() {
 		dialog.ShowError(err, s.app.window)
 		return
 	}
+	if problem := modelProblem(settings.Local.Backend.Normalise(), settings.Local.ModelPath); problem != "" &&
+		settings.Mode == config.ModeLocal {
+		// Saved, not refused: someone may be about to download the model, and
+		// refusing would make configuring before fetching impossible. But
+		// reporting plain success for a pairing that cannot start is how this
+		// was first discovered — at the first attempt to dictate.
+		s.say("Settings saved. " + problem)
+		return
+	}
 	s.say("Settings saved.")
 }
 
@@ -936,6 +953,16 @@ func backendFor(label string) localserver.Backend {
 // and a message about an XML parse.
 func (s *settingsTab) onBackendChanged(label string) {
 	backend := backendFor(label)
+	if problem := modelProblem(backend, s.modelPath.Text); problem != "" {
+		// Said here rather than left for the first attempt to dictate. The
+		// directory is on screen, the backend was just chosen, and the whole
+		// mistake is visible from both — whereas at dictation time it arrives
+		// as a wall of text from a Python process that has already exited.
+		s.backendNote.SetText(problem)
+		s.backendNote.Importance = widget.DangerImportance
+		s.backendNote.Refresh()
+		return
+	}
 	switch backend {
 	case localserver.BackendIntelGPU:
 		s.backendNote.SetText("OpenVINO. Reads openvino_encoder_model.xml — see docs/model-setup.md.")
@@ -944,5 +971,55 @@ func (s *settingsTab) onBackendChanged(label string) {
 	default:
 		s.backendNote.SetText("CTranslate2. Reads model.bin — see docs/model-setup.md.")
 	}
+	s.backendNote.Importance = widget.LowImportance
 	s.backendNote.Refresh()
+}
+
+// modelProblem reports why the configured directory cannot serve this backend,
+// or "" when it can — or when there is nothing yet to judge.
+//
+// A path that does not exist is deliberately not a problem here: configuring
+// before downloading is a normal order to work in, and `--check` and the server
+// both say so plainly when the time comes. What this catches is the directory
+// that is there and is the wrong conversion, which is the mistake that looks
+// completely fine until dictation fails.
+func modelProblem(backend localserver.Backend, path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(path, backend.Weights())); err == nil {
+		return ""
+	}
+	if sibling := siblingModel(backend, path); sibling != "" {
+		return fmt.Sprintf("No %s here — %s wants %s instead.",
+			backend.Weights(), backend.Label(), sibling)
+	}
+	return fmt.Sprintf("No %s here, so %s cannot read this directory. See docs/model-setup.md.",
+		backend.Weights(), backend.Label())
+}
+
+// siblingModel looks for the right conversion beside the wrong one.
+//
+// fetch-model puts them next to each other under names that differ by a
+// suffix, so someone who has already downloaded both is one directory away and
+// naming it saves them going to find out what it is called.
+func siblingModel(backend localserver.Backend, path string) string {
+	base := filepath.Base(path)
+	for _, other := range localserver.Backends() {
+		if suffix := other.ModelSuffix(); suffix != "" {
+			base = strings.TrimSuffix(base, suffix)
+		}
+	}
+	candidate := filepath.Join(filepath.Dir(path), base+backend.ModelSuffix())
+	if candidate == path {
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(candidate, backend.Weights())); err != nil {
+		return ""
+	}
+	return filepath.Base(candidate)
 }

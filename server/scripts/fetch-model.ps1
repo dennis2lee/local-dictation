@@ -11,13 +11,17 @@
   .\fetch-model.ps1                              # large-v3 into the default dir
   .\fetch-model.ps1 -Model large-v3-turbo        # turbo (half the size, much faster)
   .\fetch-model.ps1 -Model base                  # draft model, for live partials
+  .\fetch-model.ps1 -Model large-v3-turbo-openvino-int8   # for an Intel GPU
   .\fetch-model.ps1 -Model all -Dest D:\models   # every model + the VAD
   .\fetch-model.ps1 -List                        # show sizes, download nothing
   .\fetch-model.ps1 -Verify -Dest D:\models      # re-check an existing install
 #>
 [CmdletBinding()]
 param(
-    [ValidateSet('large-v3', 'large-v3-turbo', 'base', 'vad', 'all')]
+    [ValidateSet('large-v3', 'large-v3-turbo', 'base', 'vad', 'all',
+                 'large-v3-turbo-openvino-int8',
+                 'large-v3-turbo-openvino-fp16',
+                 'large-v3-turbo-openvino-int4')]
     [string]$Model = 'large-v3',
 
     [string]$Dest = "$env:LOCALAPPDATA\LocalDictation\models",
@@ -39,6 +43,16 @@ $Repos = @{
     # The draft model: it writes only the live partial text and nothing that is
     # kept, which on CPU is the single biggest latency change available.
     'base'           = 'Systran/faster-whisper-base'
+    # OpenVINO IR exports, for --backend openvino on an Intel GPU. A different
+    # format again: these hold openvino_encoder_model.xml rather than model.bin,
+    # and the two are not interchangeable — the server refuses the wrong one at
+    # startup rather than failing inside the first decode.
+    #
+    # Three precisions because which to ship is a measurement. INT8 is the
+    # expected answer; openvino-benchmark.py is what settles it.
+    'large-v3-turbo-openvino-int8' = 'OpenVINO/whisper-large-v3-turbo-int8-ov'
+    'large-v3-turbo-openvino-fp16' = 'OpenVINO/whisper-large-v3-turbo-fp16-ov'
+    'large-v3-turbo-openvino-int4' = 'OpenVINO/whisper-large-v3-turbo-int4-ov'
 }
 # Only the fallback for when the API is unreachable. The file set differs
 # between conversions — the large-v3 repos carry vocabulary.json and a
@@ -180,6 +194,21 @@ if ($Model -eq 'base') {
     Write-Host 'Leave model.path pointing at the accurate model. The draft one only'
     Write-Host 'writes the partial text you watch appear; what you keep is decoded'
     Write-Host 'once, at the end, by the model above it.'
+}
+elseif ($Model -like 'large-v3-turbo-openvino-*') {
+    Write-Host ''
+    Write-Host 'an OpenVINO export, for an Intel GPU. In the client:'
+    Write-Host '  Settings > Local server > Decode on > Intel GPU'
+    Write-Host "  Settings > Local server > Model directory > $Dest\$Model"
+    Write-Host ''
+    Write-Host 'Point Model directory at this one, not at large-v3-turbo - that is the'
+    Write-Host 'CPU conversion and this backend cannot read it.'
+    Write-Host ''
+    Write-Host 'Running a server by hand instead:'
+    Write-Host "  model.path:                     $Dest\$Model"
+    Write-Host '  model.device:                   GPU'
+    Write-Host "  streaming.silero_model_path:    $Dest\silero_vad.onnx"
+    Write-Host '  and start it with --backend openvino'
 }
 elseif ($Model -ne 'vad') {
     $installed = if ($Model -eq 'all') { 'large-v3' } else { $Model }

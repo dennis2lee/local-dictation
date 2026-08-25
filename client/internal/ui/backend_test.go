@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -121,4 +123,79 @@ func gpuBackendHere(t *testing.T) localserver.Backend {
 	}
 	t.Skip("no accelerator backend is supported on this operating system")
 	return localserver.BackendCPU
+}
+
+func TestChoosingAGPUWithTheCPUModelSaysSoBeforeDictating(t *testing.T) {
+	// What 0.1.24 did on a Windows laptop: Intel GPU was chosen, the model
+	// directory still held the CTranslate2 conversion, Save reported success,
+	// and the first press of the shortcut produced a wall of text from a
+	// Python process that had already exited. The directory and the backend
+	// are both on screen when the choice is made; this is where it belongs.
+	models := t.TempDir()
+	cpuModel := filepath.Join(models, "large-v3-turbo")
+	if err := os.MkdirAll(cpuModel, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cpuModel, "model.bin"), []byte("ct2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	settings := testSettings()
+	settings.Local.ModelPath = cpuModel
+	tab := newTestSettingsTab(halfBuiltApp(settings), settings)
+
+	// The CPU backend is happy with it.
+	tab.onBackendChanged(localserver.BackendCPU.Label())
+	if note := tab.backendNote.Text; strings.Contains(note, "cannot read it") {
+		t.Errorf("the CPU backend complained about its own model: %q", note)
+	}
+
+	// Every accelerator is not, and says which file is missing.
+	for _, backend := range []localserver.Backend{localserver.BackendIntelGPU, localserver.BackendAppleGPU} {
+		note := modelProblem(backend, cpuModel)
+		if note == "" {
+			t.Fatalf("%s accepted a directory holding only model.bin", backend.Label())
+		}
+		if !strings.Contains(note, backend.Weights()) {
+			t.Errorf("%s said %q, which does not name %s", backend.Label(), note, backend.Weights())
+		}
+	}
+}
+
+func TestTheRightConversionBesideTheWrongOneIsNamed(t *testing.T) {
+	// fetch-model puts them next to each other under names differing by a
+	// suffix. Someone who has downloaded both is one directory away, and
+	// naming it saves them going to look up what it is called.
+	models := t.TempDir()
+	cpuModel := filepath.Join(models, "large-v3-turbo")
+	gpuModel := filepath.Join(models, "large-v3-turbo"+localserver.BackendIntelGPU.ModelSuffix())
+	for dir, weights := range map[string]string{
+		cpuModel: localserver.BackendCPU.Weights(),
+		gpuModel: localserver.BackendIntelGPU.Weights(),
+	} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, weights), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	problem := modelProblem(localserver.BackendIntelGPU, cpuModel)
+
+	if !strings.Contains(problem, filepath.Base(gpuModel)) {
+		t.Errorf("the sibling export was not offered: %q", problem)
+	}
+}
+
+func TestAModelDirectoryThatIsNotThereYetIsNotAComplaint(t *testing.T) {
+	// Configuring before downloading is a normal order to work in. Complaining
+	// about an absent path would make the note permanent noise during setup,
+	// and both --check and the server say so plainly when it matters.
+	if problem := modelProblem(localserver.BackendIntelGPU, filepath.Join(t.TempDir(), "not-yet")); problem != "" {
+		t.Errorf("an absent directory was reported as a problem: %q", problem)
+	}
+	if problem := modelProblem(localserver.BackendIntelGPU, ""); problem != "" {
+		t.Errorf("an empty path was reported as a problem: %q", problem)
+	}
 }
