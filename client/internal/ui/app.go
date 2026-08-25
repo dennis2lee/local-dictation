@@ -38,6 +38,10 @@ type Options struct {
 	Version  string
 	Settings config.Config
 	StateDir string
+	// Show reports that someone launched the app again while this copy was
+	// already running. The window comes forward rather than a second copy
+	// starting. Nil when nothing can report it.
+	Show <-chan struct{}
 }
 
 // App owns the window, the tray and everything under them.
@@ -108,6 +112,7 @@ func New(options Options) (*App, error) {
 	application.registerHotkey(options.Settings.Hotkey)
 
 	go application.consumeUpdates()
+	go application.consumeShowRequests()
 	return application, nil
 }
 
@@ -300,6 +305,18 @@ func (a *App) onShortcut() {
 			log.Printf("dictation: %v", err)
 		}
 	}()
+}
+
+// consumeShowRequests brings the window forward when someone launches the app
+// again. Without it the second launch appears to do nothing at all, which
+// reads as the app being broken rather than as it already being open.
+func (a *App) consumeShowRequests() {
+	for range a.options.Show {
+		fyne.Do(func() {
+			a.window.Show()
+			a.window.RequestFocus()
+		})
+	}
 }
 
 // consumeUpdates moves session state onto the UI.

@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -19,6 +20,7 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/config"
 	"github.com/dennis2lee/local-dictation/client/internal/localserver"
 	"github.com/dennis2lee/local-dictation/client/internal/platform"
+	"github.com/dennis2lee/local-dictation/client/internal/singleton"
 	"github.com/dennis2lee/local-dictation/client/internal/ui"
 )
 
@@ -51,6 +53,27 @@ func main() {
 		os.Exit(runCheck(settings, path))
 	}
 
+	// One copy per user. The app lives in the tray, so launching it again —
+	// from the Start menu, from a shortcut, from double-clicking the thing
+	// already running — used to add a second tray icon, register the same
+	// global shortcut a second time and start a second speech server. None of
+	// that announces itself; it just behaves oddly later.
+	//
+	// Held for the life of the process. The second copy asks the first to show
+	// itself and exits, which is what launching an app that is already running
+	// was meant to do.
+	singleton.Dir(stateDir)
+	instance, err := singleton.Acquire(ui.AppID)
+	if errors.Is(err, singleton.ErrAlreadyRunning) {
+		return
+	}
+	if err != nil {
+		// Not fatal. Failing to take the lock is not a reason to refuse to
+		// run — a machine where this cannot work should still dictate.
+		fmt.Fprintf(os.Stderr, "local-dictation: %v\n", err)
+	}
+	defer instance.Release()
+
 	// From here on there may be nowhere for a failure to appear. The Windows
 	// build is linked with -H=windowsgui and has no console at all; a macOS
 	// bundle opened from Finder has no terminal either. A crash on the way to
@@ -74,6 +97,7 @@ func main() {
 		Version:  version,
 		Settings: settings,
 		StateDir: stateDir,
+		Show:     instance.Show(),
 	})
 	if err != nil {
 		reportStartupFailure(diagnostics, err)
