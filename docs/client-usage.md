@@ -77,6 +77,22 @@ natural rhythm to dictate in: a sentence, a breath, a sentence. Each finished
 sentence is followed by a space, so a paragraph dictated in several breaths
 reads as a paragraph rather than as one run-on line.
 
+## The Main tab, control by control
+
+Everything on it, top to bottom.
+
+| | What it is |
+| --- | --- |
+| **The shortcut, top right** | What you press to start and stop. Shown here so you never have to open Settings to remember it. Change it on **Settings → Typing**. |
+| **The status panel** | A coloured light, a line saying what is happening, and the language choice. It is the only part of the app you need while dictating. |
+| **Korean / English** | Which server the next session uses. There is no automatic detection — see [Everyday dictation](#everyday-dictation). Switching mid-session is not possible; the choice is locked while the light is green or amber. |
+| **Start / stop** | The same thing the shortcut does, for when you are already in the window. It types into whatever had focus before, so this is rarely what you want — the shortcut is. |
+| **Settings** | Opens the Settings tab. |
+
+A second line appears under the status when something needs saying: an
+Accessibility permission that has been revoked, or a shortcut another
+application has already taken. It is not there when there is nothing wrong.
+
 ## Status indicator
 
 | Colour | Meaning |
@@ -111,9 +127,24 @@ finding one setting does not mean scrolling past all of them:
 | **Updates** | The installed version, and checking for a newer one |
 
 **Save** sits below the tabs and applies all of them at once, so edits on
-several tabs are one save.
+several tabs are one save. Nothing takes effect until you press it, and a line
+under the button says what happened — including when a setting was accepted but
+will not work, such as a model directory the chosen decoder cannot read.
+
+Every control is locked while the indicator is green or amber. Stop dictating to
+change anything.
 
 ### Server
+
+| | |
+| --- | --- |
+| **This computer** / **Remote servers** | Where the speech server runs. Everything below applies to remote servers only. |
+| **Test connections** *(top right)* | Contacts both servers and reports each separately. Works before saving, so a wrong port is found without committing it. |
+| **Server address** | Host name or IP of the machine running the servers. No scheme, no port — just `dictation.internal` or `10.0.0.24`. |
+| **Korean port** / **English port** | 8765 and 8766 unless whoever runs the servers changed them. They must differ. |
+| **Use TLS (wss)** | Off unless the server has its own certificate authority. Turning it on reveals the three fields below. |
+| **CA certificate** | The authority that signed the server's certificate. Required with TLS on. |
+| **Client certificate** / **Client key** | Only for a server that demands client certificates. Both or neither. |
 
 **This computer** (the default) runs the speech server on your own machine. The
 first session after launching takes longer while the model loads — around ten
@@ -143,6 +174,18 @@ command. Connect to `127.0.0.1` and leave TLS off; SSH is already doing both
 jobs.
 
 ### Local
+
+| | |
+| --- | --- |
+| **Decode on** | Which hardware decodes. Appears only where there is more than one answer. |
+| **Model directory** | The accurate model — the one that produces the text you keep. Required. |
+| **Draft model directory** | Optional. A small model that produces only the live text; see [latency.md](latency.md). Must be the same format as the accurate one. |
+| **Silero VAD file** | Optional. `silero_vad.onnx`, which decides when you have stopped speaking. Without it the server falls back to a loudness threshold. |
+
+The line under the fields says which file the chosen decoder reads, and turns
+red when the configured directory holds a different one. Under that, a line
+reports what the built-in server is doing — building its Python environment,
+loading the model, ready.
 
 **Decode on** chooses the hardware. It appears only where there is more than
 one answer, and the choices are whatever this machine could actually run:
@@ -174,6 +217,13 @@ once.
 Nothing here works without a speech model, and none is included in any
 installer — they are gigabytes and carry their own licence. This tab is where
 they are installed and where you can see which already are.
+
+| | |
+| --- | --- |
+| **The line at the top** | Which directory models are installed into. |
+| **For &lt;decoder&gt;** | The models the decoder chosen on the **Local** tab can read. |
+| **Other backends** | Everything else in the catalogue, so "what have I already downloaded" is answerable too. |
+| **Download** / **Re-download** | Fetches that one. The line under the list reports each file as it arrives. |
 
 Models for the backend chosen on the **Local** tab come first, under a heading
 naming it. The rest are listed below, because "what have I already downloaded"
@@ -214,7 +264,29 @@ Everything here can also be done from a terminal with `fetch-model.sh` or
 transfer and checksum verification. The two write the same files and the same
 `SHA256SUMS`, so a model fetched either way verifies with either.
 
+### Advanced
+
+Four settings for the built-in server, all of which are right by default. This
+tab exists so they are reachable, not because they need changing.
+
+| | |
+| --- | --- |
+| **Python** | The interpreter that runs the server. Empty finds one on `PATH`. Set it when a machine has several and the wrong one is being picked. |
+| **CPU threads** | How many threads the CPU decoder uses. 0 lets it choose. Pinning it to the number of performance cores can help on a machine with efficiency cores; it does nothing on a GPU decoder. |
+| **Korean port** / **English port** | Which loopback ports the built-in servers listen on. Empty picks free ones each start, which is what avoids colliding with anything else. Fill them in only if something on your machine needs the numbers to be predictable. |
+
+None of these apply in **Remote servers** mode — that server's ports are on the
+**Server** tab.
+
 ### Audio
+
+| | |
+| --- | --- |
+| **Microphone** | Which device to record from. **Default system microphone** follows the operating system, so plugging in a headset switches automatically. |
+| **Refresh device list** | Re-reads the devices. Press it after plugging something in. |
+| **Test microphone** | Starts and stops a level test without starting a dictation session. |
+| **The meter** | Green at a good level, amber loud, red clipping. |
+| **Input level** | Multiplies the signal before anything else sees it, from ×0.5 to ×8. |
 
 Pick a device, then press **Test microphone** and speak. The meter beside it
 should light up. Press it again to stop.
@@ -242,6 +314,12 @@ it, turn the microphone down at the system mixer instead.
 
 ### Typing
 
+| | |
+| --- | --- |
+| **The modifier checkboxes** | `Ctrl`, `Shift`, `Alt` and `Win` on Windows; `Ctrl`, `Shift`, `Option` and `Cmd` on macOS. Tick at least one. |
+| **The key list** | The key those modifiers combine with. |
+| **Show words before they settle** | Off by default. See below — it is the setting to check if dictation lags behind your voice. |
+
 Choose the modifiers and key for the shortcut. The change takes effect when you
 save.
 
@@ -262,6 +340,12 @@ them again — for one short sentence, forty-six keystrokes instead of fourteen.
 If dictation lags behind your voice, this is the setting.
 
 ### Updates
+
+| | |
+| --- | --- |
+| **The version line** | Which build this is. The same number is in the window's title bar. |
+| **The line under it** | Where a check will look, and what the last one found. |
+| **Update** | Checks, downloads, installs and reopens the app. One press is the whole decision. |
 
 Shows the installed version. **Update** does the whole thing: it looks for a
 newer release, and if there is one it downloads it, installs it, and reopens
