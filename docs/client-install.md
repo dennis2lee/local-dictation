@@ -27,7 +27,7 @@ That is one command, and it is [step 3](#3-install-a-speech-model) below.
 Download `LocalDictation-<version>.pkg` and open it, or:
 
 ```bash
-sudo installer -pkg LocalDictation-0.1.7.pkg -target /
+sudo installer -pkg LocalDictation-0.1.26.pkg -target /
 ```
 
 A `.dmg` is also published if you prefer to drag the app to Applications.
@@ -47,7 +47,7 @@ Run `LocalDictation-<version>-x64.msi`. It installs to
 For an unattended install:
 
 ```powershell
-msiexec /i LocalDictation-0.1.7-x64.msi /qn /l*v install.log
+msiexec /i LocalDictation-0.1.26-x64.msi /qn /l*v install.log
 ```
 
 The app lands in `/Applications` and nowhere else. If you have an older copy
@@ -217,6 +217,12 @@ Everything needed to dictate is in place.
 ```
 
 Anything marked `FAIL` names what to fix. Then read [client-usage.md](client-usage.md).
+
+One thing worth knowing before the first launch: **closing the window does not
+quit.** The app stays in the menu bar on macOS and the notification area on
+Windows so the shortcut keeps working, and opening it again brings that window
+back rather than starting a second copy. **Quit** in the tray menu is how it
+stops.
 
 ---
 

@@ -29,6 +29,24 @@ The shortcut works from any application. You do not have to bring Local
 Dictation to the front, and you should not: it types into whatever was focused
 when you pressed it.
 
+## The window, and the thing in the tray
+
+Closing the window does not quit. Local Dictation stays in the menu bar on
+macOS and the notification area on Windows, and the shortcut goes on working —
+which is the point of a tool you drive from a shortcut rather than from a
+window.
+
+That means it is usually already running. Opening it again from the Start menu,
+the Dock, a desktop shortcut or Spotlight brings the window you already have
+back to the front; it does not start a second copy. Before 0.1.26 it did, which
+put a second icon in the tray, registered the shortcut twice and started a
+second speech server — none of which said anything, it just behaved oddly
+afterwards.
+
+To actually stop it, use **Quit** in the tray menu. The same menu has **Show**
+and **Start / stop dictation**, so a session can be run without the window at
+all.
+
 ## Why text arrives a beat late
 
 A word is typed once, when the server is sure of it, and then it never moves.
@@ -70,6 +88,10 @@ reads as a paragraph rather than as one run-on line.
 
 Settings are locked while the indicator is green or amber. Stop dictating to
 change them.
+
+The four colours are the most saturated thing in the window on purpose: nothing
+else — not the accent on the buttons, not the active tab — is allowed to be
+more colourful than the light that carries the answer.
 
 ---
 
@@ -290,7 +312,13 @@ A fork that publishes its own releases sets `update.github_repo` to
 
 ### The app does not open at all
 
-Nothing appears, or a window flashes and is gone. There is no console to read on
+**First: look in the tray.** Closing the window leaves the app running there, so
+"nothing happens when I open it" is usually the window coming forward somewhere
+you are not looking — on another desktop or behind the window you are in. The
+tray menu's **Show** brings it back.
+
+If there is nothing in the tray either, a window flashes and is gone, or
+nothing appears at all. There is no console to read on
 Windows — the app is built without one — so the reason goes to a file instead:
 
 | | |

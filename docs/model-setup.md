@@ -165,7 +165,8 @@ does, it needs to be an OpenVINO export as well, because the draft runs on the
 same backend as the accurate model.
 
 Then point `model.path` at the export, set `model.device` to `GPU`, and start
-the server with `--backend openvino`. In the client that is **Settings → Local → Decode on → Intel GPU**.
+the server with `--backend openvino`. In the client that is **Settings → Local
+→ Decode on → Intel GPU**.
 
 **It will not quietly fall back to the CPU.** A machine with no Intel GPU, a
 missing graphics driver or a missing OpenVINO GPU plugin is a startup error

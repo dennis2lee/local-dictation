@@ -22,6 +22,8 @@ were already using. Audio never leaves the machine that transcribes it.
   through MLX, or on an Intel GPU through OpenVINO. One setting, three model
   formats, and no silent fall back to the CPU when the GPU is not there —
   [model-setup.md](docs/model-setup.md).
+- **Lives in the tray.** Closing the window keeps the shortcut working; opening
+  the app again brings that window back rather than starting a second copy.
 - **Windows and macOS**, with an Ubuntu or macOS server for shared deployments.
 
 ## Getting started
