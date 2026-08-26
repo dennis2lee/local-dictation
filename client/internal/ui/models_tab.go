@@ -96,7 +96,7 @@ func (s *settingsTab) refreshModels() {
 
 	s.modelsBox.Add(inlineCaption("For " + backend.Label()))
 	for _, state := range mine {
-		s.modelsBox.Add(s.modelRow(state, !served))
+		s.modelsBox.Add(s.modelRow(state, urgentRow(state, served)))
 	}
 	if len(others) > 0 {
 		s.modelsBox.Add(inlineCaption("Other backends"))
@@ -107,10 +107,29 @@ func (s *settingsTab) refreshModels() {
 	s.modelsBox.Refresh()
 }
 
+// urgentRow says a row names something whose absence makes dictation wrong.
+//
+// Two different absences, because they are two different failures. With no
+// accurate model, nothing decodes — but several models fill that role, so it
+// is the empty *set* that is wrong and not each uninstalled alternative.
+//
+// The detector is its own case: dictation runs without it, and produces
+// sentences nobody said. The server then compares loudness instead, which
+// ranks a breath above the word "네", so the decoder is handed windows with no
+// speech in them and answers with the boilerplate it was trained on. Listed
+// quietly beside four optional conversions, it read as one more thing you
+// could take or leave.
+func urgentRow(state models.State, served bool) bool {
+	if state.Model.Role == models.Detector {
+		return !state.Installed
+	}
+	return !served
+}
+
 // modelRow is one line: what it is, whether it is here, and a button.
 //
-// `urgent` says this backend has no accurate model installed at all, which is
-// the one state on this tab that stops dictation working.
+// `urgent` says this row is one of the two states on this tab that make
+// dictation wrong — see urgentRow.
 func (s *settingsTab) modelRow(state models.State, urgent bool) fyne.CanvasObject {
 	name := widget.NewLabel(state.Model.Name)
 	// Truncated, not wrapped and not left at its natural width. A Border gives
@@ -125,10 +144,10 @@ func (s *settingsTab) modelRow(state models.State, urgent bool) fyne.CanvasObjec
 	switch {
 	case state.Installed:
 		name.Importance = widget.SuccessImportance
-	case urgent && state.Model.Role == models.Accurate:
-		// Nothing here can decode. Everything else on this tab is optional, an
-		// alternative to something already installed, or belongs to a backend
-		// that is not selected.
+	case urgent:
+		// urgentRow decides this, and only urgentRow: the rule used to be
+		// spelled out here as well, and the copy here quietly outranked it —
+		// widening the one above changed nothing at all until this line went.
 		name.Importance = widget.DangerImportance
 	default:
 		name.Importance = widget.MediumImportance

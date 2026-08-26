@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -25,6 +26,17 @@ func installed(t *testing.T, dir, name string, backend localserver.Backend) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(path, backend.Weights()), []byte("w"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// installedFile puts a single-file model — the detector — on disk.
+func installedFile(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("onnx"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -246,8 +258,10 @@ func TestOnlyAnEmptyBackendIsMarkedUrgent(t *testing.T) {
 		t.Error("with no model installed, nothing was marked as missing")
 	}
 
-	// One installed: nothing is urgent any more.
+	// One installed: nothing is urgent any more. The detector goes in too —
+	// it has its own rule and this test is not about it.
 	installed(t, dir, "large-v3-turbo", localserver.BackendCPU)
+	installedFile(t, dir, localserver.DetectorName)
 	tab.refreshModels()
 
 	if urgent := urgentNames(tab); len(urgent) != 0 {
@@ -272,18 +286,27 @@ func urgentNames(tab *settingsTab) []string {
 	return names
 }
 
-func TestTheDetectorIsNeverMarkedUrgent(t *testing.T) {
-	// It is optional — without it the server falls back to an energy
-	// threshold — so it must not read as the reason dictation will not start.
+func TestAMissingDetectorIsMarkedUrgent(t *testing.T) {
+	// This used to be listed quietly, as optional, on the grounds that the
+	// server falls back to an energy threshold without it. It does, and that
+	// threshold ranks a breath above the word "네" — so the decoder is handed
+	// windows with no speech in them and answers with sentences nobody said.
+	// Dictation runs and its output is wrong, which is worse than a red row.
 	dir := t.TempDir()
+	installed(t, dir, "large-v3-turbo", localserver.BackendCPU)
 	settings := testSettings()
 	settings.Local.ModelPath = filepath.Join(dir, "large-v3-turbo")
 	tab := newTestSettingsTab(halfBuiltApp(settings), settings)
 
-	for _, name := range urgentNames(tab) {
-		if name == "silero_vad.onnx" {
-			t.Error("the voice activity detector was flagged as a missing prerequisite")
-		}
+	if !slices.Contains(urgentNames(tab), localserver.DetectorName) {
+		t.Errorf("a missing %s was not flagged; red rows were %v",
+			localserver.DetectorName, urgentNames(tab))
+	}
+
+	installedFile(t, dir, localserver.DetectorName)
+	tab.refreshModels()
+	if slices.Contains(urgentNames(tab), localserver.DetectorName) {
+		t.Errorf("%s is installed and still flagged", localserver.DetectorName)
 	}
 }
 

@@ -324,13 +324,13 @@ func (t *tee) Write(p []byte) (int, error) {
 // the port may be chosen at runtime, and a stale file pointing at a port
 // nothing is listening on is a confusing failure.
 func writeServerConfig(path string, options Options, port int) error {
+	// Beside the model counts as configured: that is where both installers put
+	// the detector, and treating a blank setting as "energy detector please"
+	// left it on disk and unused. See ResolveDetector for what that costs.
 	vad := "energy"
-	vadPath := ""
-	if options.VadModelPath != "" {
-		if _, err := os.Stat(options.VadModelPath); err == nil {
-			vad = "silero"
-			vadPath = options.VadModelPath
-		}
+	vadPath := ResolveDetector(options.VadModelPath, options.ModelPath)
+	if vadPath != "" {
+		vad = "silero"
 	}
 
 	var builder strings.Builder

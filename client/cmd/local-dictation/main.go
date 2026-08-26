@@ -162,7 +162,7 @@ func runCheck(settings config.Config, settingsPath string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	problems := 0
+	problems, warnings := 0, 0
 	report := func(label string, ok bool, detail string) {
 		mark := "ok  "
 		if !ok {
@@ -170,6 +170,14 @@ func runCheck(settings config.Config, settingsPath string) int {
 			problems++
 		}
 		fmt.Printf("%s  %-22s %s\n", mark, label, detail)
+	}
+	// Separate from a failure because it is a different thing to tell someone:
+	// dictation will run, and it will be worse. Counting it as a problem would
+	// make the closing line — "before dictation will work" — untrue, and an
+	// installer that gates on the exit code would refuse a usable install.
+	warn := func(label, detail string) {
+		warnings++
+		fmt.Printf("warn  %-22s %s\n", label, detail)
 	}
 
 	fmt.Printf("Local Dictation %s\n", version)
@@ -207,22 +215,31 @@ func runCheck(settings config.Config, settingsPath string) int {
 	}
 
 	if settings.Mode == config.ModeLocal {
-		checkLocalServer(ctx, settings, report)
+		checkLocalServer(ctx, settings, report, warn)
 	} else {
 		report("server mode", true, fmt.Sprintf("remote: %s (ko %d, en %d)",
 			settings.Remote.Host, settings.Remote.KoreanPort, settings.Remote.EnglishPort))
 	}
 
 	fmt.Println()
-	if problems == 0 {
+	if problems == 0 && warnings == 0 {
 		fmt.Println("Everything needed to dictate is in place.")
+		return 0
+	}
+	if problems == 0 {
+		fmt.Printf("Dictation will work. %d thing(s) above will make it worse than it needs to be.\n", warnings)
 		return 0
 	}
 	fmt.Printf("%d problem(s) need attention before dictation will work.\n", problems)
 	return 1
 }
 
-func checkLocalServer(ctx context.Context, settings config.Config, report func(string, bool, string)) {
+func checkLocalServer(
+	ctx context.Context,
+	settings config.Config,
+	report func(string, bool, string),
+	warn func(string, string),
+) {
 	serverDir, err := localserver.ResolveServerDir(settings.Local.ServerDir)
 	if err != nil {
 		report("server files", false, err.Error())
@@ -258,6 +275,21 @@ func checkLocalServer(ctx context.Context, settings config.Config, report func(s
 			settings.Local.ModelPath, backend.Weights(), backend.Label()))
 	} else {
 		report("model", true, settings.Local.ModelPath)
+	}
+
+	// Not a failure: without it the server still starts and still transcribes.
+	// It transcribes sounds that are not speech as well, though, because the
+	// detector it falls back to cannot tell them apart — and Whisper's answer
+	// to a window of breath is a sentence nobody said.
+	if detector := localserver.ResolveDetector(settings.Local.VadModelPath, settings.Local.ModelPath); detector != "" {
+		report("voice detector", true, detector)
+	} else {
+		warn("voice detector", fmt.Sprintf(
+			"no %s configured or beside the model. Without it the server "+
+				"compares loudness instead, which reads a breath as speech, and "+
+				"the decoder answers that with text nobody said — usually "+
+				"\"감사합니다\". Install it from Settings › Models.",
+			localserver.DetectorName))
 	}
 
 	// The draft model runs on the same backend as the accurate one, so it has

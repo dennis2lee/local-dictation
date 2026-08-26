@@ -180,7 +180,15 @@ jobs.
 | **Decode on** | Which hardware decodes. Appears only where there is more than one answer. |
 | **Model directory** | The accurate model — the one that produces the text you keep. Required. |
 | **Draft model directory** | Optional. A small model that produces only the live text; see [latency.md](latency.md). Must be the same format as the accurate one. |
-| **Silero VAD file** | Optional. `silero_vad.onnx`, which decides when you have stopped speaking. Without it the server falls back to a loudness threshold. |
+| **Silero VAD file** | `silero_vad.onnx`, which decides when you have stopped speaking. Leave it blank and the app looks for one beside the model, which is where both ways of installing a model put it. Set it only to point somewhere else. |
+
+**It is not optional, whatever the blank field suggests.** Without a detector
+the server compares loudness instead, and loudness cannot tell a breath from a
+word — measured on this project's own clips, a breath reads as 0.38 s of speech
+where the word "네" reads as 0.24 s. The decoder is then handed windows with no
+speech in them, and its answer to those is a sentence it invented. If
+**Settings › Models** shows `silero_vad.onnx` in red, that is what it is
+telling you.
 
 The line under the fields says which file the chosen decoder reads, and turns
 red when the configured directory holds a different one. Under that, a line
@@ -476,11 +484,46 @@ Check which language is selected on the Main tab, and that the ports on
 **Settings → Server** are not swapped. Press **Test connections**, at the top
 right of that tab: it reports what each port actually serves.
 
+### A sentence appears that nobody said
+
+Usually "감사합니다", sometimes "다음 영상에서 만나요" or a bare "!", and usually
+right after you stop talking.
+
+Nothing misheard you. Handed a stretch of audio with no speech in it, Whisper
+does not return nothing — it returns the boilerplate the subtitles it was
+trained on ended with, and it returns it *confidently*: a second of pure digital
+silence decodes to "감사합니다." with the model's own no-speech probability at
+0.00. No filter downstream can tell that apart from a sentence you really said,
+so the fix is to keep such audio away from the decoder, and servers from 0.1.28
+do — a window has to hold at least 120 ms of detected speech before it is
+decoded at all.
+
+**Running the built-in server?** Check **Settings › Models** first. If
+`silero_vad.onnx` is red there, that is the cause and installing it is the fix:
+without it the server compares loudness, which reads a breath as 0.38 s of
+speech against 0.24 s for the word "네" — it ranks a breath *above* a real word,
+so no amount of tuning separates them. `local-dictation --check` says the same
+thing from a terminal.
+
+If one still slips through with the detector in place, the room is noisy enough
+that it is calling something speech. Raise `streaming.min_speech_ms` on the
+server ([server-usage.md](server-usage.md)), a little at a time: every 10 ms you
+add is 10 ms of a real short word you risk losing, and the shortest ones measure
+about 290 ms.
+
 ### Text is duplicated or letters go missing
 
-Check whether **Show words before they settle** is on, on the **Typing** tab. It
-is off by default, and with it off nothing is ever rewritten, so this class of
-problem does not arise.
+If a *phrase* is repeated — "오늘 오늘 회의에서는", or a whole sentence typed
+twice — the server is what fixes it, and 0.1.28 does. When a sentence outgrows
+one decode window the committed text is handed back to the decoder as context so
+it knows what it is in the middle of, and Whisper is entirely willing to repeat
+that context into its own output. Servers from 0.1.28 cut the repeat off at the
+join. An older server pointed at a newer client still repeats: it is the server
+half that changed.
+
+For single letters, or a word rewritten as you watch, check whether **Show words
+before they settle** is on, on the **Typing** tab. It is off by default, and
+with it off nothing is ever rewritten, so this class of problem does not arise.
 
 With it on, provisional text is replaced by sending backspaces, and an
 application with aggressive autocorrect or auto-indent can fight with that — it

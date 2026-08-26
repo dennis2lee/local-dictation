@@ -239,7 +239,10 @@ func (s *settingsTab) buildLocalServerSection(settings config.Config) fyne.Canva
 	s.modelPath = entry(settings.Local.ModelPath, config.DefaultModelPath())
 	s.draftPath = entry(settings.Local.DraftModelPath,
 		"optional: a small model (base) for sub-second partials")
-	s.vadPath = entry(settings.Local.VadModelPath, "optional: silero_vad.onnx")
+	// Not "optional". Leaving it blank finds silero_vad.onnx beside the model,
+	// which is where both installers put it; what is optional is *saying* so.
+	// A server with no detector at all invents sentences out of breaths.
+	s.vadPath = entry(settings.Local.VadModelPath, "found beside the model unless set here")
 	s.pythonPath = entry(settings.Local.PythonPath, "optional: leave empty to find Python automatically")
 	s.cpuThreads = entry(threadsText(settings.Local.CPUThreads), "0 = let the decoder choose")
 	// Empty means 0, which means "pick a free one". Something else on the
