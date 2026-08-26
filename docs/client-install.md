@@ -27,7 +27,7 @@ That is one command, and it is [step 3](#3-install-a-speech-model) below.
 Download `LocalDictation-<version>.pkg` and open it, or:
 
 ```bash
-sudo installer -pkg LocalDictation-0.1.27.pkg -target /
+sudo installer -pkg LocalDictation-0.1.28.pkg -target /
 ```
 
 A `.dmg` is also published if you prefer to drag the app to Applications.
@@ -47,7 +47,7 @@ Run `LocalDictation-<version>-x64.msi`. It installs to
 For an unattended install:
 
 ```powershell
-msiexec /i LocalDictation-0.1.27-x64.msi /qn /l*v install.log
+msiexec /i LocalDictation-0.1.28-x64.msi /qn /l*v install.log
 ```
 
 The app lands in `/Applications` and nowhere else. If you have an older copy
