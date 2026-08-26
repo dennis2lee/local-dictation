@@ -274,6 +274,7 @@ Ten of the thirty-four, and the ones a real deployment usually touches. The
 | `model.cpu_threads` | `0` lets CTranslate2 choose. Pin it to the physical core count after benchmarking; hyperthreads make INT8 slower. |
 | `streaming.chunk_ms` | How often a decode pass runs. Lower is snappier and costs more CPU. |
 | `streaming.silence_ms` | Trailing silence that ends a sentence. Raise it in a noisy room. |
+| `streaming.min_speech_ms` | How much detected speech a window needs before it is decoded. This is what stands between a breath and a sentence Whisper invented. |
 | `streaming.max_window_seconds` | Caps how much audio one pass covers, so cost stays flat during a long monologue. |
 | `server.port` | The port that language serves on. The two must differ; see above. |
 | `server.host` | `0.0.0.0` (the shipped value) serves every interface, `127.0.0.1` only this machine. See [Security](#security). |
@@ -327,6 +328,7 @@ Handed to the inference backend. `device`, `compute_type`, `cpu_threads` and
 | `max_utterance_seconds` | `120` | ≥ 5 | Hard cap. The utterance is force-finalized and the client gets a non-fatal error. |
 | `max_window_seconds` | `12.0` | ≥ 3, and ≤ `max_utterance_seconds` | The longest stretch one decode pass may cover. Past it, audio whose text is already committed is dropped and carried forward as a prompt — this is what keeps cost per pass flat however long someone talks. |
 | `agreement_window` | `2` | ≥ 2 | How many consecutive hypotheses must agree before a prefix is committed. `2` is LocalAgreement-2; `3` commits less and shows text later. |
+| `min_speech_ms` | `120` | 0–1000 | How much *detected speech* a window must hold before it is sent to the decoder. Handed silence, Whisper does not answer with silence — it answers with the boilerplate its training subtitles ended on, confidently, and nothing downstream can tell that apart from a real sentence. Raise it if a phantom line still slips through; every 10 ms you add is 10 ms of a real short word you risk dropping, and the shortest measured one is 290 ms. `0` decodes anything the detector twitched at, which is what produced the phantoms. |
 | `vad` | `silero` | `silero`, `energy`, `none` | `silero` is a speech model and the only one that holds up in a noisy room. `energy` is a plain RMS threshold. `none` treats everything as speech, so utterances end only when you stop or the cap fires. |
 | `energy_threshold` | `0.006` | RMS, `0.0`–`1.0` | Only read by the energy detector. |
 | `silero_model_path` | `<prefix>/models/silero_vad.onnx` | a path, or `null` | Required when `vad` is `silero`. If the file is missing at startup the server logs a warning and falls back to the energy detector rather than refusing to serve — `check` reports this as a warning, not a failure. |
@@ -372,6 +374,8 @@ up:
   decodes, the second chops utterances mid-word
 - `agreement_window` below 2, `max_utterance_seconds` below 5,
   `max_window_seconds` below 3 or above `max_utterance_seconds`
+- `min_speech_ms` outside 0–1000 — at the top of that range it is already
+  discarding words people said
 - `max_sessions` below 1, `max_audio_frame_bytes` below one 20 ms frame
 - `vad: silero` with no `silero_model_path`
 - **A half-configured TLS pair.** Certificate without key, or the reverse;
@@ -536,6 +540,41 @@ decode finishes.
 the VAD falling back to the energy detector. The server cross-checks its voice
 detector against raw signal level, so a model file that is missing or the wrong
 export reports itself instead of quietly treating every session as silence.
+
+**Sentences appear that nobody said** — "감사합니다", "다음 영상에서 만나요", a
+bare "!". Whisper's answer to a window with no speech in it is not silence: it
+is the boilerplate its training subtitles ended on, delivered with the model's
+own no-speech probability at 0.00 and an average log-probability in the same
+range as real speech. Nothing after the decoder can tell the two apart, so the
+audio must not reach it. `streaming.min_speech_ms` is the gate; raise it in a
+room noisy enough that the detector keeps opening utterances on nothing, and
+raise it slowly — the shortest real word measures about 290 ms of detected
+speech, and the default sits at 120 ms.
+
+None of the three inference backends helps here. faster-whisper's `vad_filter`
+runs the same Silero model at the same threshold as the session does, so
+anything that got past one gets past the other; MLX and OpenVINO have no
+equivalent at all.
+
+The gate is also only as good as the detector behind it. `vad: energy` is an
+RMS threshold and cannot tell a breath from a word — a breath clears 0.006 RMS
+comfortably — so on a host that fell back to it, expect to raise
+`min_speech_ms` well above the default, or better, put `silero_vad.onnx` where
+`silero_model_path` points.
+
+**A phrase is typed twice.** Once a sentence outgrows `max_window_seconds` the
+committed text goes back to the decoder as a prompt so the trimmed window still
+knows what it is in the middle of — and Whisper is free to carry that prompt
+into its output. Measured on the same clip, prompt the only difference:
+
+```
+audio from 0.18s  prompt=''      -> '회의에서는 지난 분기 실적과 …'
+audio from 0.18s  prompt='오늘 '  -> '오늘 회의에서는 지난 분기 실적과 …'
+```
+
+"오늘" is not in that audio — it was trimmed away because it had already been
+committed and typed. The server cuts the repeat off at the join; if you are
+seeing this, the server is older than the client.
 
 **Latency is bad.** [latency.md](latency.md). Start with `model.draft_path`.
 

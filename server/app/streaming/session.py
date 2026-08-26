@@ -25,6 +25,7 @@ import asyncio
 import logging
 import time
 from collections.abc import Callable
+from dataclasses import replace
 from functools import partial
 from concurrent.futures import Executor
 from typing import Protocol
@@ -33,7 +34,8 @@ from app.inference.base import InferenceError, Transcriber, TranscriptionResult,
 from app.protocol import ServerError, ServerMessage, ServerTranscript
 from app.settings import StreamingSettings
 from app.streaming.buffer import BYTES_PER_SAMPLE, SAMPLE_RATE, AudioBuffer, AudioFormatError
-from app.streaming.local_agreement import LocalAgreement
+from app.streaming.local_agreement import LocalAgreement, remainder_after
+from app.streaming.stitch import repeated_prefix
 from app.streaming.vad import SilenceTracker, create_vad
 
 log = logging.getLogger(__name__)
@@ -88,6 +90,7 @@ class StreamingSession:
 
         self._chunk_seconds = settings.chunk_ms / 1000
         self._silence_seconds = settings.silence_ms / 1000
+        self._min_speech_seconds = settings.min_speech_ms / 1000
 
         self._revision = 0
         self._utterance_index = 0
@@ -199,12 +202,24 @@ class StreamingSession:
             await self.events.put(ServerError("internal_error", "decode loop failed"))
             self._flush_done.set()
 
+    def _window_worth_decoding(self) -> bool:
+        """Whether the audio now in the buffer holds enough speech to decode.
+
+        Not `has_speech`, which latches for the whole utterance on a single
+        frame and stays true over audio that has since been trimmed away. This
+        asks about the window that is actually about to be sent, because the
+        decoder's answer to a window with nothing in it is not nothing — see
+        streaming.min_speech_ms.
+        """
+        speech = self._silence.speech_seconds_in_last(self._buffer.duration_seconds)
+        return speech > 0 and speech >= self._min_speech_seconds
+
     async def _step(self) -> bool:
         """Do at most one unit of work. Returns True if more may be pending."""
         if self._closing:
             return False
 
-        if not self._silence.has_speech:
+        if not self._window_worth_decoding():
             # Nothing worth decoding yet. Keep a short pre-roll so the first
             # word is not clipped, and drop the rest rather than growing a
             # buffer of silence toward the max-utterance cap.
@@ -237,10 +252,7 @@ class StreamingSession:
             self._flush_done.set()
             return False
 
-        if (
-            self._silence.has_speech
-            and self._silence.trailing_silence_seconds >= self._silence_seconds
-        ):
+        if self._silence.trailing_silence_seconds >= self._silence_seconds:
             await self._finalize()
             return False
 
@@ -283,16 +295,29 @@ class StreamingSession:
 
         if agreement.conflict:
             # The decoder revised committed text. Close the utterance at what
-            # the user already has, then reopen with the new reading. The audio
-            # stays: it belongs to the new utterance.
-            await self._close_utterance(self._agreement.committed)
+            # the user already has, then reopen with the new reading — minus
+            # the part of that reading the user has already been given, which
+            # would otherwise arrive at the cursor a second time.
+            typed = self._agreement.committed
+            await self._close_utterance(typed)
             self._start_new_utterance()
             self._committed_prefix = ""
             self._prompt = ""
             self._agreement.reset()
             self._last_emitted = None
-            reopened = self._agreement.update(hypothesis)
-            self._emit(self._committed_prefix + reopened.stable, reopened.partial, final=False)
+            self._window_hypothesis = ""
+            # The audio behind `typed` is still in the window, so every later
+            # pass over it would say those words again. Drop it, on the
+            # decoder's own timings, and let the next pass read what is left.
+            cut = _word_boundary_seconds(result.words, typed)
+            if cut is not None and cut > 0.1:
+                self._buffer.trim_before(cut)
+                return
+            # No timings to cut on — a backend that reports none. The remainder
+            # is still the right thing to show now, but the window cannot be
+            # re-anchored, so a later commit over the same audio may repeat it.
+            reopened = self._agreement.update(remainder_after(typed, hypothesis))
+            self._emit(reopened.stable, reopened.partial, final=False)
             return
 
         self._emit(self._committed_prefix + agreement.stable, agreement.partial, final=False)
@@ -392,7 +417,7 @@ class StreamingSession:
         # must run even when every sample was already decoded by the draft.
         # With a single model, a pass over audio nothing has been added to would
         # just reproduce the last hypothesis at full cost.
-        needs_accurate_pass = self._silence.has_speech and (
+        needs_accurate_pass = self._window_worth_decoding() and (
             self._draft is not None or self._buffer.undecoded_seconds > 0
         )
         accurate_text: str | None = None
@@ -432,15 +457,21 @@ class StreamingSession:
         if agreement.conflict:
             # Committed text cannot be retracted: seal the current utterance
             # with what was already committed, then carry the contradicting
-            # reading into a fresh one.
-            self._emit(self._committed_prefix + self._agreement.committed, "", final=True)
+            # reading into a fresh one. Only the part of that reading the user
+            # does not already have — sealing and then re-sending the whole
+            # window typed the agreed-on prefix twice, which for a revision
+            # near the end of a sentence is the entire sentence.
+            typed = self._agreement.committed
+            self._emit(self._committed_prefix + typed, "", final=True)
+            remainder = remainder_after(typed, window_text)
             self._start_new_utterance()
             self._committed_prefix = ""
             self._prompt = ""
             self._agreement.reset()
             self._last_emitted = None
-            sealed = self._agreement.commit_all(window_text)
-            self._emit(sealed.stable, "", final=True)
+            if remainder.strip():
+                sealed = self._agreement.commit_all(remainder)
+                self._emit(sealed.stable, "", final=True)
         else:
             self._emit(self._committed_prefix + agreement.stable, "", final=True)
 
@@ -493,7 +524,38 @@ class StreamingSession:
             audio_seconds=result.audio_seconds,
             duration_seconds=result.duration_seconds or (self._clock() - started),
         )
-        return result
+        return self._without_repeat_of(result, prompt)
+
+    def _without_repeat_of(
+        self, result: TranscriptionResult, prompt: str
+    ) -> TranscriptionResult:
+        """Drop any part of a hypothesis that only says the prompt over again.
+
+        See app/streaming/stitch.py for why one turns up. What matters here is
+        that the prompt is text the user already has, so a hypothesis opening
+        with it gets that text prepended and typed a second time.
+
+        The word timings are cut to match. They are what decides how much audio
+        may be dropped, and a hypothesis whose words disagree with it about
+        where the text begins is worse than either problem being fixed. Only
+        whole words falling entirely inside the removed text go, so the words
+        can still cover slightly more than the text does — an error in the
+        direction of trimming less audio, never more.
+        """
+        if not prompt or not result.text:
+            return result
+        cut = repeated_prefix(prompt, result.text)
+        if cut == 0:
+            return result
+        log.debug(
+            "hypothesis opened by repeating the prompt",
+            extra={"session_id": self.session_id, "characters": cut},
+        )
+        return replace(
+            result,
+            text=result.text[cut:].lstrip(),
+            words=_words_after(result.words, cut),
+        )
 
     def _emit(self, stable: str, partial: str, *, final: bool) -> None:
         if not final and self._last_emitted == (stable, partial):
@@ -517,6 +579,16 @@ class StreamingSession:
 #: How much committed text to hand the decoder as context. Whisper charges the
 #: prompt against its context window, so this is deliberately short.
 _PROMPT_CHARACTERS = 200
+
+
+def _words_after(words: tuple[Word, ...], characters: int) -> tuple[Word, ...]:
+    """The words left once the first `characters` of the text are removed."""
+    consumed = 0
+    for index, word in enumerate(words):
+        consumed += len(word.text)
+        if consumed > characters:
+            return words[index:]
+    return ()
 
 
 def _word_boundary_seconds(words: tuple[Word, ...], committed: str) -> float | None:

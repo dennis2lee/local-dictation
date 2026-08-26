@@ -45,6 +45,12 @@ streaming:
   max_window_seconds: 12.0
   # LocalAgreement-2: commit what two consecutive hypotheses agree on.
   agreement_window: 2
+  # Detected speech a window must hold before it is decoded at all. Whisper
+  # answers a window with no speech in it with the boilerplate its training
+  # subtitles ended on — "감사합니다" — and answers it confidently, so nothing
+  # downstream can filter it. The shortest real word measures about 290 ms of
+  # detected speech; raise this in a noisy room, slowly.
+  min_speech_ms: 120
   vad: "silero"
   silero_model_path: "/opt/local-dictation/models/silero_vad.onnx"
   energy_threshold: 0.006

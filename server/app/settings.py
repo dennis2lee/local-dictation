@@ -80,6 +80,26 @@ class StreamingSettings:
     #: Number of consecutive agreeing hypotheses required to commit a prefix.
     #: 2 is the LocalAgreement-2 policy; 3 is more conservative and slower.
     agreement_window: int = 2
+    #: Detected speech a decode window must hold before it is worth decoding.
+    #:
+    #: Handed a window with no speech in it, Whisper does not return nothing.
+    #: It returns the boilerplate its training subtitles ended on — "감사합니다"
+    #: in Korean, "Thank you for watching" in English — and it returns it
+    #: confidently: measured on this project's own models, a second of digital
+    #: silence decodes to "감사합니다." with no_speech_prob 0.00 and avg_logprob
+    #: -0.47, which is to say no threshold downstream can tell it apart from
+    #: real speech. It has to be kept away from the decoder instead.
+    #:
+    #: One frame used to be enough to open an utterance, so a door closing or
+    #: a breath at the end of a sentence produced a decode of essentially
+    #: nothing, and that decode produced a phantom sentence.
+    #:
+    #: Measured with Silero on this project's test clips: the shortest real
+    #: Korean word ("네") registers 0.29 s of speech, while digital silence,
+    #: room tone and breath all register 0.00 s. 120 ms sits inside that gap
+    #: with room on both sides. 0 restores the old behaviour of decoding
+    #: whatever the detector twitched at.
+    min_speech_ms: int = 120
     vad: Literal["silero", "energy", "none"] = "silero"
     #: Only used by the energy detector. RMS below this counts as silence.
     energy_threshold: float = 0.006
@@ -146,6 +166,12 @@ class Settings:
             errors.append("streaming.chunk_ms below 100 wastes CPU on redundant decodes")
         if self.streaming.silence_ms < 100:
             errors.append("streaming.silence_ms below 100 chops utterances mid-word")
+        if not 0 <= self.streaming.min_speech_ms <= 1000:
+            errors.append(
+                "streaming.min_speech_ms must be between 0 and 1000; the "
+                "shortest real word measures about 290 ms of detected speech, "
+                "so anything near that ceiling drops words the user said"
+            )
         if self.streaming.agreement_window < 2:
             errors.append("streaming.agreement_window must be >= 2")
         if self.streaming.max_utterance_seconds < 5:

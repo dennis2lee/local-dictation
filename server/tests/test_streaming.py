@@ -6,14 +6,16 @@ import asyncio
 
 import pytest
 
+from app.inference.base import TranscriptionResult, Word
 from app.inference.fake import FakeTranscriber
 from app.protocol import ServerError, ServerTranscript
 from app.settings import StreamingSettings
 from app.streaming.buffer import AudioBuffer, AudioFormatError
 from app.streaming.local_agreement import LocalAgreement, tokenize
 from app.streaming.session import StreamingSession
+from app.streaming.stitch import MAX_REPEAT_CHARACTERS, drop_repeated_prefix, repeated_prefix
 from app.streaming.vad import EnergyVad, SilenceTracker
-from tests.conftest import silence, speech
+from tests.conftest import SAMPLE_RATE, silence, speech
 
 # -- buffer ----------------------------------------------------------------
 
@@ -543,3 +545,332 @@ def test_commit_all_forgives_the_same_recasing():
     assert not result.conflict
     assert result.stable.startswith("The meeting")
     assert result.stable.endswith("three o'clock.")
+
+
+# -- not saying it twice ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("previous", "hypothesis", "want"),
+    [
+        # The measured case: 0.18 s of audio was trimmed after "오늘" was
+        # committed, and the decode of what was left opened by saying it again.
+        ("오늘 ", "오늘 회의에서는 지난 분기", "회의에서는 지난 분기"),
+        # A short window and a long prompt come back as the whole prompt.
+        ("보고서를 제출해 주세요.", "보고서를 제출해 주세요.", ""),
+        # Whisper re-spaces Korean between passes, so the two spellings of the
+        # same words have to match.
+        ("보고서를 제출해 주세요", "보고서를제출해주세요 그리고", "그리고"),
+        # A hypothesis cut inside a multi-byte character decodes to U+FFFD.
+        ("내년 상반기 보수", "�보수적으로 잡는", "적으로 잡는"),
+        # Case is Whisper's to change, not a difference in the words.
+        ("the quarterly report ", "The quarterly report is ready", "is ready"),
+        # One shared character is a coincidence. "했습니다." and "다음" share
+        # their 다, and cutting it would leave the user reading "음 주에".
+        ("지난주에 끝냈습니다. ", "다음 주에 시작합니다", "다음 주에 시작합니다"),
+        ("오늘 회의를 시작합니다 ", "준비해 주세요", "준비해 주세요"),
+        ("", "회의를 시작합니다", "회의를 시작합니다"),
+        ("오늘 ", "", ""),
+    ],
+)
+def test_a_hypothesis_never_repeats_what_the_user_already_has(previous, hypothesis, want):
+    assert drop_repeated_prefix(previous, hypothesis) == want
+
+
+def test_only_what_the_decoder_was_shown_can_count_as_a_repeat():
+    """A match longer than the prompt the model saw is a coincidence, and
+    cutting on it would swallow text nobody has been given."""
+    run = "가" * (MAX_REPEAT_CHARACTERS + 60)
+    assert repeated_prefix(run, run + " 그리고") == MAX_REPEAT_CHARACTERS
+
+
+# -- keeping non-speech away from the decoder -------------------------------
+
+
+def test_speech_seconds_in_last_asks_only_about_the_window():
+    tracker = SilenceTracker(EnergyVad(), cross_check=False)
+    tracker.push(speech(1.0))
+    tracker.push(silence(1.0))
+    assert tracker.speech_seconds == pytest.approx(1.0, abs=0.05)
+    assert tracker.speech_seconds_in_last(0.5) == pytest.approx(0.0, abs=0.03)
+    assert tracker.speech_seconds_in_last(2.0) == pytest.approx(1.0, abs=0.05)
+    assert tracker.speech_seconds_in_last(0.0) == 0.0
+
+
+async def test_a_blip_of_noise_is_never_sent_to_the_decoder(executor):
+    """One frame used to open an utterance, and the decode of the near-silence
+    that followed came back as a sentence Whisper invented — "감사합니다" in
+    Korean, every time. Nothing downstream can tell that apart from speech, so
+    the audio must not reach the decoder at all."""
+    settings = StreamingSettings(
+        chunk_ms=200, silence_ms=300, max_utterance_seconds=10, vad="energy"
+    )
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=FakeTranscriber("ko", seconds_per_word=0.3),
+        settings=settings,
+        executor=executor,
+    ) as session:
+        await feed(session, [silence(0.2), speech(0.04), silence(0.2)])
+        await feed(session, [silence(0.2)] * 8)
+        await session.flush()
+        events = await drain(session)
+
+    assert session.decode_count == 0, "a breath was decoded, and Whisper answers those"
+    assert events == []
+
+
+async def test_a_short_word_is_still_worth_decoding(executor):
+    """The gate above must not swallow "네". Measured with Silero, the shortest
+    real Korean word registers 0.29 s of speech against 0.00 s for silence,
+    room tone and breath; the default sits at 0.12 s, inside that gap."""
+    settings = StreamingSettings(
+        chunk_ms=200, silence_ms=300, max_utterance_seconds=10, vad="energy"
+    )
+    async with StreamingSession(
+        session_id="s-1",
+        transcriber=FakeTranscriber("ko", seconds_per_word=0.1),
+        settings=settings,
+        executor=executor,
+    ) as session:
+        await feed(session, [silence(0.2), speech(0.29)])
+        await feed(session, [silence(0.2)] * 4)
+        await session.flush()
+        events = await drain(session)
+
+    assert session.decode_count >= 1, "a real word was thrown away"
+    assert any(e.final and e.stable.strip() for e in events if isinstance(e, ServerTranscript))
+
+
+# -- what the cursor ends up with -------------------------------------------
+
+
+def composed(events) -> str:
+    """What the client's composer puts in the document.
+
+    Committed text per utterance, in order, joined by the separator
+    client/internal/input/composer.go uses. Assertions about repeated text
+    belong here rather than on individual events, because a phrase typed twice
+    is two correct-looking events whose *sequence* is the defect.
+    """
+    latest: dict[str, str] = {}
+    order: list[str] = []
+    for event in events:
+        if not isinstance(event, ServerTranscript):
+            continue
+        if event.utterance_id not in order:
+            order.append(event.utterance_id)
+        latest[event.utterance_id] = event.stable
+    return " ".join(latest[u].strip() for u in order if latest[u].strip())
+
+
+WINDOW_SCRIPT = "오늘 오후 세 시에 회의를 시작합니다 준비해 주세요 모두".split()
+
+
+class WindowTranscriber:
+    """A decoder that reports the words its window holds, not its whole life.
+
+    FakeTranscriber counts words from the audio it is handed, so it says
+    *less* once the session trims — where a real decoder says the *next* words,
+    picking up after the committed text it was given as a prompt. That is what
+    makes trimming safe, and modelling it is the only way to exercise the
+    trimmed-window path at all.
+
+    `echo_prompt` adds Whisper's habit of carrying that prompt into its own
+    output. It is not a fault injected for the test: it is measured behaviour
+    of both shipping GPU backends, at every prompt length tried.
+    """
+
+    def __init__(self, *, seconds_per_word: float = 0.3, echo_prompt: bool = False) -> None:
+        self._seconds_per_word = seconds_per_word
+        self._echo = echo_prompt
+        self.calls = 0
+        self.closed = False
+
+    name = "window"
+    language = "ko"
+
+    def warmup(self) -> None: ...
+
+    def close(self) -> None:
+        self.closed = True
+
+    def transcribe(self, pcm, *, prompt: str = ""):
+        self.calls += 1
+        audio_seconds = len(pcm) / (SAMPLE_RATE * 2)
+        start = len(prompt.split())
+        count = min(len(WINDOW_SCRIPT) - start, int(audio_seconds / self._seconds_per_word))
+        spoken = WINDOW_SCRIPT[start : start + count]
+        words = [
+            Word(
+                text=(" " if index else "") + word,
+                start=index * self._seconds_per_word,
+                end=(index + 1) * self._seconds_per_word,
+            )
+            for index, word in enumerate(spoken)
+        ]
+        text = " ".join(spoken)
+        if self._echo and prompt.strip():
+            # The echoed words have no audio behind them, and Whisper reports
+            # them at the very start of the window.
+            words = [Word(text=w, start=0.0, end=0.0) for w in prompt.split()] + words
+            text = " ".join(filter(None, (prompt.strip(), text)))
+        return TranscriptionResult(
+            text=text,
+            audio_seconds=audio_seconds,
+            duration_seconds=0.0,
+            words=tuple(words),
+        )
+
+
+TRIMMING_SETTINGS = StreamingSettings(
+    chunk_ms=200,
+    silence_ms=300,
+    max_utterance_seconds=30,
+    max_window_seconds=1.0,
+    agreement_window=2,
+    vad="energy",
+)
+
+
+async def test_a_decoder_that_repeats_its_prompt_does_not_type_the_words_twice(executor):
+    """The committed text goes back to the decoder as a prompt, and the decoder
+    is free to say it again. The session then prepends the same committed text,
+    so without a cut at the join the user gets "오늘 오늘 회의에서는"."""
+    echoing = WindowTranscriber(echo_prompt=True)
+    async with StreamingSession(
+        session_id="s-1", transcriber=echoing, settings=TRIMMING_SETTINGS, executor=executor
+    ) as session:
+        await feed(session, [speech(0.2)] * 20)
+        await session.flush()
+        events = await drain(session)
+
+    document = composed(events)
+    assert document, "nothing was transcribed, so the test proves nothing"
+    assert document.split() == WINDOW_SCRIPT, f"the echo reached the cursor: {document!r}"
+
+
+async def test_the_prompt_is_still_worth_carrying(executor):
+    """The cut above must not cost the text itself: a decoder that behaves
+    reports the same words either way."""
+    plain = WindowTranscriber()
+    async with StreamingSession(
+        session_id="s-1", transcriber=plain, settings=TRIMMING_SETTINGS, executor=executor
+    ) as session:
+        await feed(session, [speech(0.2)] * 20)
+        await session.flush()
+        plain_events = await drain(session)
+
+    echoing = WindowTranscriber(echo_prompt=True)
+    async with StreamingSession(
+        session_id="s-2", transcriber=echoing, settings=TRIMMING_SETTINGS, executor=executor
+    ) as session:
+        await feed(session, [speech(0.2)] * 20)
+        await session.flush()
+        echo_events = await drain(session)
+
+    assert composed(echo_events) == composed(plain_events)
+
+
+class ScriptedTranscriber:
+    """Returns a staged hypothesis per call, so a revision can be staged too.
+
+    Word timings are spread evenly over whatever audio it is given, which is
+    all the streaming layer asks of them.
+    """
+
+    def __init__(self, hypotheses: list[str], *, language: str = "ko") -> None:
+        self._hypotheses = hypotheses
+        self.language = language
+        self.calls = 0
+        self.closed = False
+        #: Audio each call was handed. The session trimming its window is
+        #: visible here and nowhere else a test can reach.
+        self.audio_seconds: list[float] = []
+
+    name = "scripted"
+
+    def warmup(self) -> None: ...
+
+    def close(self) -> None:
+        self.closed = True
+
+    def transcribe(self, pcm, *, prompt: str = ""):
+        text = self._hypotheses[min(self.calls, len(self._hypotheses) - 1)]
+        self.calls += 1
+        audio_seconds = len(pcm) / (SAMPLE_RATE * 2)
+        self.audio_seconds.append(audio_seconds)
+        spoken = text.split()
+        span = audio_seconds / max(len(spoken), 1)
+        return TranscriptionResult(
+            text=text,
+            audio_seconds=audio_seconds,
+            duration_seconds=0.0,
+            words=tuple(
+                Word(text=(" " if index else "") + word, start=index * span, end=(index + 1) * span)
+                for index, word in enumerate(spoken)
+            ),
+        )
+
+
+REVISION = [
+    "오늘 오후 세",
+    "오늘 오후 세 시에",
+    # The decoder changes its mind about a word the user already has.
+    "오늘 저녁 여섯 시에 회의를",
+]
+
+
+async def test_a_revision_at_the_end_does_not_type_the_sentence_twice(
+    streaming_settings, executor
+):
+    """Committed text cannot be retracted, so a contradicting reading opens a
+    new utterance. Sending the *whole* reading into it typed the agreed-on
+    prefix a second time — for a revision near the end of a sentence, the
+    entire sentence."""
+    scripted = ScriptedTranscriber(REVISION)
+    async with StreamingSession(
+        session_id="s-1", transcriber=scripted, settings=streaming_settings, executor=executor
+    ) as session:
+        await feed(session, [speech(0.2)] * 2)
+        session.push_audio(speech(0.1))
+        await session.flush()
+        events = await drain(session)
+
+    document = composed(events)
+    assert "오늘" in document, "nothing was committed, so the test proves nothing"
+    assert document.split().count("오늘") == 1, f"the utterance was typed twice: {document!r}"
+    assert document.split().count("시에") == 1, f"the tail was typed twice: {document!r}"
+
+
+async def test_a_revision_mid_utterance_drops_the_audio_behind_what_was_typed(
+    streaming_settings, executor
+):
+    """Same rule for a revision that arrives while the user is still talking,
+    and one thing more: the audio behind the text they already have is still in
+    the window, so unless it goes too, the very next pass reads those words and
+    offers them again.
+
+    A window that shrinks between passes is the only evidence of that a test
+    can reach from outside, and nothing else in this setup can shrink one —
+    max_window_seconds is ten times the audio fed here."""
+    scripted = ScriptedTranscriber(REVISION + ["시에 회의를 시작합니다"])
+    async with StreamingSession(
+        session_id="s-1", transcriber=scripted, settings=streaming_settings, executor=executor
+    ) as session:
+        await feed(session, [speech(0.2)] * 6)
+        await session.flush()
+        events = await drain(session)
+
+    assert len(scripted.audio_seconds) >= 4, "not enough passes to stage the revision"
+    shrank = [
+        (before, after)
+        for before, after in zip(scripted.audio_seconds, scripted.audio_seconds[1:])
+        if after < before
+    ]
+    assert shrank, (
+        "the window never shrank, so the audio behind the typed text is still "
+        f"there for the next pass to read: {scripted.audio_seconds}"
+    )
+    document = composed(events)
+    assert document.split().count("오늘") == 1, f"the utterance was typed twice: {document!r}"

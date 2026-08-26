@@ -1,11 +1,15 @@
 """Voice activity detection and trailing-silence tracking.
 
-Two jobs, and only the second one is on the critical path:
+Three jobs, all of them on the critical path:
 
-* deciding *when an utterance has ended* so the session can finalize — that is
-  what `SilenceTracker` does with whatever detector is configured;
-* filtering non-speech out of the decode itself, which faster-whisper already
-  does internally via `vad_filter=True`.
+* deciding *when an utterance has ended* so the session can finalize;
+* deciding whether a window holds enough speech to be worth decoding at all —
+  `speech_seconds_in_last`, which the session gates every decode on. Whisper
+  answers a window of silence with a sentence it invented, so this is the only
+  thing standing between a breath and a phantom "감사합니다";
+* filtering non-speech out of the decode itself, which faster-whisper does
+  internally via `vad_filter=True` — and which the MLX and OpenVINO backends
+  have no equivalent of, so nothing here may rely on it.
 
 Silero is the accurate option and the configured default. The energy detector is
 the fallback that always works: no model file, no onnxruntime, no surprises on a
@@ -19,6 +23,7 @@ from __future__ import annotations
 import logging
 import math
 import struct
+from collections import deque
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -250,6 +255,10 @@ class SilenceTracker:
     #: How long the detector may disagree with the signal level before we stop
     #: believing it. Long enough that a genuinely noisy room does not trip it.
     DISAGREEMENT_LIMIT_SECONDS = 4.0
+    #: How far back `speech_seconds_in_last` can see. Comfortably longer than
+    #: the longest utterance the server accepts, at two floats per 20-32 ms
+    #: frame.
+    HISTORY_SECONDS = 180.0
 
     def __init__(
         self,
@@ -265,6 +274,11 @@ class SilenceTracker:
         self._leftover = b""
         self._trailing_silence_frames = 0
         self._speech_frames = 0
+        #: (duration, was speech) per frame, oldest first. Frame durations are
+        #: stored rather than assumed because the detector can be swapped for
+        #: the energy one mid-session, and its frames are a different size.
+        self._timeline: deque[tuple[float, bool]] = deque()
+        self._timeline_seconds = 0.0
 
         self._cross_check = cross_check and vad.name not in ("energy", "none")
         self._loud_but_silent_frames = 0
@@ -285,7 +299,29 @@ class SilenceTracker:
 
     @property
     def speech_seconds(self) -> float:
+        """Speech detected since the last reset, over the whole utterance."""
         return self._speech_frames * self._frame_seconds
+
+    def speech_seconds_in_last(self, seconds: float) -> float:
+        """Speech detected within the most recent `seconds` of audio pushed.
+
+        `speech_seconds` counts an utterance from its start, but the session
+        drops audio from the front of its window as text is committed, so by
+        the time a long utterance is finalized the two numbers are nothing
+        alike. This is the one that answers the question a decode actually
+        asks: is there anything in the audio I am about to send.
+        """
+        if seconds <= 0:
+            return 0.0
+        remaining = seconds
+        total = 0.0
+        for frame_seconds, speech in reversed(self._timeline):
+            if remaining <= 0:
+                break
+            if speech:
+                total += min(frame_seconds, remaining)
+            remaining -= frame_seconds
+        return total
 
     @property
     def trailing_silence_seconds(self) -> float:
@@ -298,6 +334,9 @@ class SilenceTracker:
             frame = data[offset : offset + self._frame_bytes]
             offset += self._frame_bytes
             speech = self._vad.is_speech(frame)
+            # Before the audit, which can swap the detector and with it the
+            # frame size this classification was made at.
+            self._remember(speech)
             if self._cross_check:
                 self._audit(frame, speech)
             if speech:
@@ -306,6 +345,12 @@ class SilenceTracker:
             else:
                 self._trailing_silence_frames += 1
         self._leftover = data[offset:]
+
+    def _remember(self, speech: bool) -> None:
+        self._timeline.append((self._frame_seconds, speech))
+        self._timeline_seconds += self._frame_seconds
+        while self._timeline_seconds > self.HISTORY_SECONDS:
+            self._timeline_seconds -= self._timeline.popleft()[0]
 
     def _audit(self, frame: bytes, speech: bool) -> None:
         if speech:
@@ -341,6 +386,8 @@ class SilenceTracker:
         self._trailing_silence_frames = 0
         self._speech_frames = 0
         self._loud_but_silent_frames = 0
+        self._timeline.clear()
+        self._timeline_seconds = 0.0
         self._vad.reset()
 
 

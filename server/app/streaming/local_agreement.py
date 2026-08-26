@@ -77,6 +77,18 @@ def _same_words_ignoring_case(a: list[str], b: list[str]) -> bool:
     return [word.casefold() for word in _words(a)] == [word.casefold() for word in _words(b)]
 
 
+def remainder_after(typed: str, hypothesis: str) -> str:
+    """The part of `hypothesis` beyond the tokens `typed` already covers.
+
+    Used when the decoder contradicts text the user can already see. The text
+    cannot be taken back, so the new reading is carried into a fresh utterance
+    — but only the part of it the user has not been given, or the overlap is
+    typed a second time. Token position is the alignment, which is the same one
+    the conflict was detected with.
+    """
+    return "".join(tokenize(hypothesis)[len(tokenize(typed)) :])
+
+
 @dataclass(frozen=True)
 class AgreementResult:
     #: The committed prefix after this update. Never shorter than before.
