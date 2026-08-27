@@ -323,6 +323,47 @@ class SilenceTracker:
             remaining -= frame_seconds
         return total
 
+    def speech_span_in_last(
+        self, seconds: float, *, pad: float = 0.0
+    ) -> tuple[float, float] | None:
+        """Where the speech sits inside the most recent `seconds` of audio.
+
+        Offsets from the start of that window, padded on both sides and clamped
+        to it. None when the window holds no speech at all.
+
+        The pad is not politeness. The detector marks a word a frame or two
+        after it starts, so cutting exactly on the first speech frame clips the
+        onset — and Whisper reads a word that begins at sample zero differently
+        from one with a moment of room before it.
+        """
+        if seconds <= 0:
+            return None
+
+        # Walk back until the window is covered, then forward to place the
+        # frames. The oldest one usually straddles the window's start edge,
+        # which is what the negative `at` accounts for.
+        frames: list[tuple[float, bool]] = []
+        covered = 0.0
+        for frame in reversed(self._timeline):
+            frames.append(frame)
+            covered += frame[0]
+            if covered >= seconds:
+                break
+        frames.reverse()
+
+        first: float | None = None
+        last = 0.0
+        at = seconds - covered
+        for frame_seconds, speech in frames:
+            if speech:
+                if first is None:
+                    first = at
+                last = at + frame_seconds
+            at += frame_seconds
+        if first is None:
+            return None
+        return max(0.0, first - pad), min(seconds, last + pad)
+
     @property
     def trailing_silence_seconds(self) -> float:
         return self._trailing_silence_frames * self._frame_seconds

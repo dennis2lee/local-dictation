@@ -874,3 +874,111 @@ async def test_a_revision_mid_utterance_drops_the_audio_behind_what_was_typed(
     )
     document = composed(events)
     assert document.split().count("오늘") == 1, f"the utterance was typed twice: {document!r}"
+
+
+# -- decoding the speech, not the room --------------------------------------
+
+
+def test_speech_span_finds_the_words_inside_the_window():
+    tracker = SilenceTracker(EnergyVad(), cross_check=False)
+    tracker.push(silence(1.0))
+    tracker.push(speech(0.5))
+    tracker.push(silence(0.8))
+
+    span = tracker.speech_span_in_last(2.3)
+    assert span is not None
+    start, end = span
+    assert start == pytest.approx(1.0, abs=0.05)
+    assert end == pytest.approx(1.5, abs=0.05)
+
+    padded = tracker.speech_span_in_last(2.3, pad=0.2)
+    assert padded[0] == pytest.approx(0.8, abs=0.05)
+    assert padded[1] == pytest.approx(1.7, abs=0.05)
+
+    # The pad never escapes the window it is measured in.
+    tight = SilenceTracker(EnergyVad(), cross_check=False)
+    tight.push(speech(0.4))
+    assert tight.speech_span_in_last(0.4, pad=1.0) == (0.0, pytest.approx(0.4, abs=0.05))
+
+    quiet = SilenceTracker(EnergyVad(), cross_check=False)
+    quiet.push(silence(1.0))
+    assert quiet.speech_span_in_last(1.0) is None
+
+
+class RecordingTranscriber(FakeTranscriber):
+    """Remembers how much audio each pass was handed."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.audio_seconds: list[float] = []
+
+    def transcribe(self, pcm, *, prompt: str = ""):
+        self.audio_seconds.append(len(pcm) / (SAMPLE_RATE * 2))
+        return super().transcribe(pcm, prompt=prompt)
+
+
+PATIENT = StreamingSettings(
+    chunk_ms=200, silence_ms=1500, max_utterance_seconds=30, vad="energy"
+)
+
+
+async def test_the_silence_around_a_word_is_not_sent_to_the_decoder(executor):
+    """Silence is not neutral input. Measured on the real models: "네" on its
+    own decodes as "네.", and the same clip with two seconds of silence either
+    side decodes as "例". So the window is cut back to what was said, with a
+    pad — and the decoder sees a fraction of the audio the buffer holds."""
+    recorder = RecordingTranscriber("ko", seconds_per_word=0.2)
+    async with StreamingSession(
+        session_id="s-1", transcriber=recorder, settings=PATIENT, executor=executor
+    ) as session:
+        await feed(session, [speech(0.4)])
+        await feed(session, [silence(0.3)] * 6, pause=0.03)
+        await session.flush()
+        await drain(session)
+
+    assert recorder.audio_seconds, "nothing was decoded, so the test proves nothing"
+    longest = max(recorder.audio_seconds)
+    assert longest < 1.2, (
+        f"the decoder was handed {longest:.2f}s for 0.4s of speech: {recorder.audio_seconds}"
+    )
+
+
+async def test_the_trim_can_be_turned_off(executor):
+    recorder = RecordingTranscriber("ko", seconds_per_word=0.2)
+    settings = StreamingSettings(
+        chunk_ms=200, silence_ms=1500, max_utterance_seconds=30, vad="energy",
+        trim_to_speech=False,
+    )
+    async with StreamingSession(
+        session_id="s-1", transcriber=recorder, settings=settings, executor=executor
+    ) as session:
+        await feed(session, [speech(0.4)])
+        await feed(session, [silence(0.3)] * 6, pause=0.03)
+        await session.flush()
+        await drain(session)
+
+    assert max(recorder.audio_seconds) > 1.2, (
+        f"trim_to_speech: false still trimmed: {recorder.audio_seconds}"
+    )
+
+
+async def test_trimming_does_not_change_the_text(executor):
+    """The claim this is worth doing rests on it costing nothing when the audio
+    was fine already."""
+    async def transcript(trim: bool) -> str:
+        settings = StreamingSettings(
+            chunk_ms=200, silence_ms=300, max_utterance_seconds=30, vad="energy",
+            trim_to_speech=trim,
+        )
+        async with StreamingSession(
+            session_id="s-1",
+            transcriber=FakeTranscriber("ko", seconds_per_word=0.3),
+            settings=settings,
+            executor=executor,
+        ) as session:
+            await feed(session, [silence(0.2)] * 3)
+            await feed(session, [speech(0.2)] * 12)
+            await session.flush()
+            return composed(await drain(session))
+
+    assert await transcript(True) == await transcript(False) != ""

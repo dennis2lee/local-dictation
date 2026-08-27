@@ -51,6 +51,11 @@ streaming:
   # downstream can filter it. The shortest real word measures about 290 ms of
   # detected speech; raise this in a noisy room, slowly.
   min_speech_ms: 120
+  # Cut the non-speech off both ends of a window before decoding it. Silence is
+  # not neutral input: "네" alone decodes as "네.", and the same clip with two
+  # seconds of silence either side decodes as "例". Sentences are unchanged
+  # either way, so this costs nothing and decodes less audio.
+  trim_to_speech: true
   vad: "silero"
   silero_model_path: "/opt/local-dictation/models/silero_vad.onnx"
   energy_threshold: 0.006

@@ -329,6 +329,7 @@ Handed to the inference backend. `device`, `compute_type`, `cpu_threads` and
 | `max_window_seconds` | `12.0` | ≥ 3, and ≤ `max_utterance_seconds` | The longest stretch one decode pass may cover. Past it, audio whose text is already committed is dropped and carried forward as a prompt — this is what keeps cost per pass flat however long someone talks. |
 | `agreement_window` | `2` | ≥ 2 | How many consecutive hypotheses must agree before a prefix is committed. `2` is LocalAgreement-2; `3` commits less and shows text later. |
 | `min_speech_ms` | `120` | 0–1000 | How much *detected speech* a window must hold before it is sent to the decoder. Handed silence, Whisper does not answer with silence — it answers with the boilerplate its training subtitles ended on, confidently, and nothing downstream can tell that apart from a real sentence. Raise it if a phantom line still slips through; every 10 ms you add is 10 ms of a real short word you risk dropping, and the shortest measured one is 290 ms. `0` decodes anything the detector twitched at, which is what produced the phantoms. |
+| `trim_to_speech` | `true` | `true` / `false` | Cuts the non-speech off both ends of a window before decoding it, keeping 200 ms of pad. Silence is not neutral input: measured here, "네" on its own decodes as "네." and the same clip with two seconds of silence either side decodes as "例". Sentences came back identical either way, so this costs nothing on audio that was already fine, and there is less of it to decode. Turn it off only to rule it out while diagnosing something else. |
 | `vad` | `silero` | `silero`, `energy`, `none` | `silero` is a speech model and the only one that holds up in a noisy room. `energy` is a plain RMS threshold. `none` treats everything as speech, so utterances end only when you stop or the cap fires. |
 | `energy_threshold` | `0.006` | RMS, `0.0`–`1.0` | Only read by the energy detector. |
 | `silero_model_path` | `<prefix>/models/silero_vad.onnx` | a path, or `null` | Required when `vad` is `silero`. If the file is missing at startup the server logs a warning and falls back to the energy detector rather than refusing to serve — `check` reports this as a warning, not a failure. |
@@ -541,6 +542,9 @@ the VAD falling back to the energy detector. The server cross-checks its voice
 detector against raw signal level, so a model file that is missing or the wrong
 export reports itself instead of quietly treating every session as silence.
 
+Two settings work on this together. `min_speech_ms` decides whether a window
+reaches the decoder at all; `trim_to_speech` decides how much of it does.
+
 **Sentences appear that nobody said** — "감사합니다", "다음 영상에서 만나요", a
 bare "!". Whisper's answer to a window with no speech in it is not silence: it
 is the boilerplate its training subtitles ended on, delivered with the model's
@@ -550,6 +554,10 @@ audio must not reach it. `streaming.min_speech_ms` is the gate; raise it in a
 room noisy enough that the detector keeps opening utterances on nothing, and
 raise it slowly — the shortest real word measures about 290 ms of detected
 speech, and the default sits at 120 ms.
+
+The other half is what surrounds the words that *are* there. Whisper reads
+silence as context and answers differently for it, so `trim_to_speech` cuts it
+off both ends before decoding.
 
 None of the three inference backends helps here. faster-whisper's `vad_filter`
 runs the same Silero model at the same threshold as the session does, so

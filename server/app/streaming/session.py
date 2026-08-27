@@ -91,6 +91,7 @@ class StreamingSession:
         self._chunk_seconds = settings.chunk_ms / 1000
         self._silence_seconds = settings.silence_ms / 1000
         self._min_speech_seconds = settings.min_speech_ms / 1000
+        self._trim_to_speech = settings.trim_to_speech
 
         self._revision = 0
         self._utterance_index = 0
@@ -494,7 +495,37 @@ class StreamingSession:
     def _start_new_utterance(self) -> None:
         self._utterance_index += 1
 
+    def _only_the_speech(self, pcm: bytes) -> tuple[bytes, float]:
+        """The part of the window holding speech, and where it starts.
+
+        Silence is not neutral input to Whisper. It reads what surrounds a word
+        as context: "네" on its own decodes as "네.", and the same clip with two
+        seconds of silence either side decodes as "例". Sentences come back
+        identical either way, so nothing that was already working pays for this.
+
+        The returned offset is what puts the decoder's word timings back into
+        the window's own frame of reference. Everything downstream — which
+        audio may be dropped, where a committed prefix ends — is measured
+        against the window, so a result carrying timings from a shorter clip
+        would cut in the wrong place.
+        """
+        if not self._trim_to_speech:
+            return pcm, 0.0
+        span = self._silence.speech_span_in_last(
+            len(pcm) / (SAMPLE_RATE * BYTES_PER_SAMPLE), pad=_SPEECH_PAD_SECONDS
+        )
+        if span is None:
+            return pcm, 0.0
+        head = int(span[0] * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        tail = int(span[1] * SAMPLE_RATE) * BYTES_PER_SAMPLE
+        if head <= 0 and tail >= len(pcm):
+            return pcm, 0.0
+        return pcm[head:tail], head / (SAMPLE_RATE * BYTES_PER_SAMPLE)
+
     async def _decode(self, pcm: bytes, transcriber: Transcriber) -> TranscriptionResult | None:
+        if not pcm:
+            return None
+        pcm, offset = self._only_the_speech(pcm)
         if not pcm:
             return None
         loop = asyncio.get_running_loop()
@@ -524,7 +555,7 @@ class StreamingSession:
             audio_seconds=result.audio_seconds,
             duration_seconds=result.duration_seconds or (self._clock() - started),
         )
-        return self._without_repeat_of(result, prompt)
+        return self._without_repeat_of(_shifted(result, offset), prompt)
 
     def _without_repeat_of(
         self, result: TranscriptionResult, prompt: str
@@ -574,6 +605,26 @@ class StreamingSession:
         if not self._first_partial_seen and self._first_audio_at is not None:
             self._first_partial_seen = True
             self._metrics.observe_first_partial(self._clock() - self._first_audio_at)
+
+
+#: Kept either side of the speech when the window is trimmed. The detector
+#: marks a word a frame or two after it starts, and Whisper reads a word that
+#: begins at sample zero differently from one with a moment of room in front.
+_SPEECH_PAD_SECONDS = 0.2
+
+
+def _shifted(result: TranscriptionResult, offset: float) -> TranscriptionResult:
+    """Put timings from a trimmed clip back into the window's frame."""
+    if not offset:
+        return result
+    return replace(
+        result,
+        segment_ends=tuple(end + offset for end in result.segment_ends),
+        words=tuple(
+            replace(word, start=word.start + offset, end=word.end + offset)
+            for word in result.words
+        ),
+    )
 
 
 #: How much committed text to hand the decoder as context. Whisper charges the

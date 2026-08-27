@@ -100,6 +100,18 @@ class StreamingSettings:
     #: with room on both sides. 0 restores the old behaviour of decoding
     #: whatever the detector twitched at.
     min_speech_ms: int = 120
+    #: Cut the non-speech off both ends of a window before decoding it.
+    #:
+    #: Silence is not neutral input. Whisper reads what surrounds a word as
+    #: context and answers differently for it: measured on this project's own
+    #: clips, "네" on its own decodes as "네.", and the same clip with two
+    #: seconds of silence either side decodes as "例". Sentences came back
+    #: unchanged either way, so this costs nothing on audio that was fine
+    #: already — and it decodes less audio, so it is also faster.
+    #:
+    #: A pad is kept on both sides; see app/streaming/session.py. Turn this off
+    #: only to rule it out while diagnosing something else.
+    trim_to_speech: bool = True
     vad: Literal["silero", "energy", "none"] = "silero"
     #: Only used by the energy detector. RMS below this counts as silence.
     energy_threshold: float = 0.006
