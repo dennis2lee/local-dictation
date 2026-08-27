@@ -17,6 +17,12 @@ import (
 	"github.com/dennis2lee/local-dictation/client/internal/protocol"
 )
 
+// DefaultMinSpeechMs mirrors streaming.min_speech_ms in the server's own
+// settings, and a test keeps the two honest. It is repeated here rather than
+// left to the server because a zero-valued Options must not generate a config
+// that turns the gate off — which is what writing 0 through would mean.
+const DefaultMinSpeechMs = 120
+
 // Options describes one language server to run on this machine.
 type Options struct {
 	PythonPath string
@@ -26,7 +32,11 @@ type Options struct {
 	// partial text while ModelPath produces the committed text.
 	DraftModelPath string
 	VadModelPath   string
-	Language       protocol.Language
+	// MinSpeechMs is how much detected speech a window must hold before it is
+	// worth decoding. 0 means "the default": handed a window with no speech in
+	// it, Whisper answers with a sentence it invented rather than with nothing.
+	MinSpeechMs int
+	Language    protocol.Language
 	// Port 0 asks the OS for a free one, which avoids colliding with whatever
 	// else the user happens to be running.
 	Port       int
@@ -343,7 +353,12 @@ func writeServerConfig(path string, options Options, port int) error {
 		fmt.Fprintf(&builder, "  draft_path: %q\n", options.DraftModelPath)
 	}
 	fmt.Fprintf(&builder, "  beam_size: 1\n  cpu_threads: %d\n  num_workers: 1\n", options.CPUThreads)
-	fmt.Fprintf(&builder, "streaming:\n  chunk_ms: 600\n  silence_ms: 600\n  vad: %q\n", vad)
+	minSpeech := options.MinSpeechMs
+	if minSpeech <= 0 {
+		minSpeech = DefaultMinSpeechMs
+	}
+	fmt.Fprintf(&builder, "streaming:\n  chunk_ms: 600\n  silence_ms: 600\n  min_speech_ms: %d\n  vad: %q\n",
+		minSpeech, vad)
 	if vadPath != "" {
 		fmt.Fprintf(&builder, "  silero_model_path: %q\n", vadPath)
 	} else {

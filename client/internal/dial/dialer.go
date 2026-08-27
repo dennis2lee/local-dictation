@@ -101,6 +101,7 @@ func managerSettings(settings config.Config, stateDir string) localserver.Manage
 		VadModelPath:   settings.Local.VadModelPath,
 		StateDir:       stateDir,
 		CPUThreads:     settings.Local.CPUThreads,
+		MinSpeechMs:    settings.Local.MinSpeechMs,
 		Backend:        settings.Local.Backend,
 		KoreanPort:     settings.Local.KoreanPort,
 		EnglishPort:    settings.Local.EnglishPort,

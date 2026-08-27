@@ -50,6 +50,7 @@ type settingsTab struct {
 	vadPath          *widget.Entry
 	pythonPath       *widget.Entry
 	cpuThreads       *widget.Entry
+	minSpeech        *widget.Entry
 	localKoreanPort  *widget.Entry
 	localEnglishPort *widget.Entry
 	localBox         *fyne.Container
@@ -245,6 +246,8 @@ func (s *settingsTab) buildLocalServerSection(settings config.Config) fyne.Canva
 	s.vadPath = entry(settings.Local.VadModelPath, "found beside the model unless set here")
 	s.pythonPath = entry(settings.Local.PythonPath, "optional: leave empty to find Python automatically")
 	s.cpuThreads = entry(threadsText(settings.Local.CPUThreads), "0 = let the decoder choose")
+	s.minSpeech = entry(threadsText(settings.Local.MinSpeechMs),
+		strconv.Itoa(localserver.DefaultMinSpeechMs)+" = the default")
 	// Empty means 0, which means "pick a free one". Something else on the
 	// machine holding 8765 is exactly why the port a session failed on needs to
 	// be reachable from here — the failure already says to come and change it.
@@ -312,9 +315,14 @@ func (s *settingsTab) buildAdvancedSection(settings config.Config) fyne.CanvasOb
 		widget.NewForm(
 			widget.NewFormItem("Python", s.pythonPath),
 			widget.NewFormItem("CPU threads", s.cpuThreads),
+			widget.NewFormItem("Minimum speech (ms)", s.minSpeech),
 			widget.NewFormItem("Korean port", s.localKoreanPort),
 			widget.NewFormItem("English port", s.localEnglishPort),
 		),
+		caption(
+			"Minimum speech is how much of a recording must be speech before it is "+
+				"transcribed. Raise it if sentences nobody said keep appearing, and "+
+				"raise it slowly — real words measure about 290 ms."),
 	)
 }
 
@@ -861,6 +869,7 @@ func (s *settingsTab) collect(settings config.Config) config.Config {
 	settings.Local.VadModelPath = s.vadPath.Text
 	settings.Local.PythonPath = s.pythonPath.Text
 	settings.Local.CPUThreads = parsePort(s.cpuThreads.Text)
+	settings.Local.MinSpeechMs = parsePort(s.minSpeech.Text)
 	settings.Local.Backend = backendFor(s.backend.Selected)
 	settings.Local.KoreanPort = parsePort(s.localKoreanPort.Text)
 	settings.Local.EnglishPort = parsePort(s.localEnglishPort.Text)
@@ -879,7 +888,7 @@ func (s *settingsTab) setEditable(editable bool) {
 	widgets := []fyne.Disableable{
 		s.mode, s.host, s.koreanPort, s.englishPort, s.useTLS, s.caCert,
 		s.clientCert, s.clientKey, s.backend, s.modelPath, s.draftPath, s.vadPath,
-		s.pythonPath, s.cpuThreads, s.localKoreanPort, s.localEnglishPort,
+		s.pythonPath, s.cpuThreads, s.minSpeech, s.localKoreanPort, s.localEnglishPort,
 		s.microphone, s.testButton, s.shortcutKey, s.saveButton,
 	}
 	for _, check := range s.modifierChecks {

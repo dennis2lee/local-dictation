@@ -87,6 +87,16 @@ type Local struct {
 	StartBothLanguages bool `json:"start_both_languages"`
 	// MaxSessions and CPUThreads are passed through to the generated config.
 	CPUThreads int `json:"cpu_threads"`
+	// MinSpeechMs is how much detected speech a window must hold before the
+	// server decodes it. 0 means the server's own default.
+	//
+	// This is the knob for sentences nobody said. Whisper does not answer a
+	// window with no speech in it with silence — it answers with the
+	// boilerplate its training subtitles ended on, confidently enough that no
+	// filter after the decoder can tell it from real text. Raising this keeps
+	// more of the room out of the decoder; every 10 ms also risks 10 ms of a
+	// real short word, and the shortest measure about 290 ms.
+	MinSpeechMs int `json:"min_speech_ms"`
 	// Backend is the hardware the server decodes on: "cpu" (the default,
 	// everywhere), "intel-gpu" (OpenVINO — Intel Arc, Windows and Linux), or
 	// "apple-gpu" (MLX — Apple Silicon).
@@ -377,6 +387,12 @@ func (c Config) Validate() error {
 		}
 		if c.Local.CPUThreads < 0 {
 			problems = append(problems, "CPU threads cannot be negative")
+		}
+		if c.Local.MinSpeechMs < 0 || c.Local.MinSpeechMs > 1000 {
+			problems = append(problems, fmt.Sprintf(
+				"minimum speech must be between 0 and 1000 ms, got %d; the shortest "+
+					"real word measures about 290 ms of detected speech",
+				c.Local.MinSpeechMs))
 		}
 		if !c.Local.Backend.Valid() {
 			problems = append(problems, fmt.Sprintf(

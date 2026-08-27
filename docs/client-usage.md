@@ -274,13 +274,14 @@ transfer and checksum verification. The two write the same files and the same
 
 ### Advanced
 
-Four settings for the built-in server, all of which are right by default. This
+Five settings for the built-in server, all of which are right by default. This
 tab exists so they are reachable, not because they need changing.
 
 | | |
 | --- | --- |
 | **Python** | The interpreter that runs the server. Empty finds one on `PATH`. Set it when a machine has several and the wrong one is being picked. |
 | **CPU threads** | How many threads the CPU decoder uses. 0 lets it choose. Pinning it to the number of performance cores can help on a machine with efficiency cores; it does nothing on a GPU decoder. |
+| **Minimum speech (ms)** | How much of a recording has to be *speech* before it is transcribed at all. Empty means 120. This is the dial for sentences nobody said — see below. |
 | **Korean port** / **English port** | Which loopback ports the built-in servers listen on. Empty picks free ones each start, which is what avoids colliding with anything else. Fill them in only if something on your machine needs the numbers to be predictable. |
 
 None of these apply in **Remote servers** mode — that server's ports are on the
@@ -497,6 +498,22 @@ silence decodes to "감사합니다." with the model's own no-speech probability
 so the fix is to keep such audio away from the decoder, and servers from 0.1.28
 do — a window has to hold at least 120 ms of detected speech before it is
 decoded at all.
+
+**The dial for this is Minimum speech (ms)**, on the **Advanced** tab. It is
+how much detected speech a recording must contain before the decoder sees it,
+and 120 ms is the default. Raise it in steps of 50 and listen for what stops
+appearing:
+
+| | |
+| --- | --- |
+| `120` | The default. Keeps out silence, room tone and breath, which measure 0 ms of detected speech. |
+| `200`–`300` | For a room where something — a fan, a door, a cough — keeps opening a recording. Still under the ~290 ms a real short word measures, but the margin is thin. |
+| `400`+ | Only when phantom sentences are worse than losing "네" and "응". Past here you are trading real words away. |
+
+There is no setting that helps beyond that, because there is nothing left to
+tune: measured here, Silero puts speech at probability 1.00 and breath at 0.05,
+so a confidence threshold has nothing to separate. What is left is the audio
+itself.
 
 **Running the built-in server?** Check **Settings › Models** first. If
 `silero_vad.onnx` is red there, that is the cause and installing it is the fix:

@@ -41,6 +41,7 @@ type ManagerSettings struct {
 	VadModelPath   string
 	StateDir       string
 	CPUThreads     int
+	MinSpeechMs    int
 	// Backend is the hardware the server decodes on. Empty means CPU, which
 	// is what every settings file written before this field existed says.
 	Backend Backend
@@ -130,6 +131,7 @@ func (m *Manager) Ensure(ctx context.Context, language protocol.Language, progre
 		Language:       language,
 		Port:           port,
 		CPUThreads:     settings.CPUThreads,
+		MinSpeechMs:    settings.MinSpeechMs,
 		StateDir:       settings.StateDir,
 		Backend:        settings.Backend,
 	})

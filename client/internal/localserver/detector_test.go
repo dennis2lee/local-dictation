@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -117,5 +119,62 @@ func TestTheGeneratedConfigFallsBackOnlyWhenThereIsNoDetector(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "silero_model_path: null") {
 		t.Errorf("generated config should carry an explicit null path:\n%s", raw)
+	}
+}
+
+func TestTheMinimumSpeechDefaultMatchesTheServersOwn(t *testing.T) {
+	// The value is repeated in Go so that a zero-valued Options cannot generate
+	// a config that turns the gate off. Repeating it is the hazard; this is the
+	// guard. The server's settings.py is the authority.
+	root, err := filepath.Abs(filepath.Join("..", "..", "..", "server", "app", "settings.py"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(root)
+	if err != nil {
+		t.Skipf("no server checkout beside the client: %v", err)
+	}
+	match := regexp.MustCompile(`min_speech_ms: int = (\d+)`).FindSubmatch(raw)
+	if match == nil {
+		t.Fatalf("no min_speech_ms default found in %s", root)
+	}
+	want, err := strconv.Atoi(string(match[1]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if DefaultMinSpeechMs != want {
+		t.Errorf("DefaultMinSpeechMs is %d, the server's default is %d", DefaultMinSpeechMs, want)
+	}
+}
+
+func TestTheGeneratedConfigCarriesTheSpeechGate(t *testing.T) {
+	dir := t.TempDir()
+	options := Options{ModelPath: filepath.Join(dir, "large-v3-turbo"), Language: protocol.Korean}
+
+	// Unset must not mean "off". A window with no speech in it is what the
+	// decoder answers with sentences nobody said.
+	path := filepath.Join(dir, "default.yaml")
+	if err := writeServerConfig(path, options, 8765); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), fmt.Sprintf("min_speech_ms: %d", DefaultMinSpeechMs)) {
+		t.Errorf("an unset gate did not fall back to the default:\n%s", raw)
+	}
+
+	options.MinSpeechMs = 400
+	path = filepath.Join(dir, "raised.yaml")
+	if err := writeServerConfig(path, options, 8765); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "min_speech_ms: 400") {
+		t.Errorf("the configured gate did not reach the server:\n%s", raw)
 	}
 }
