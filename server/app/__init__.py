@@ -5,5 +5,5 @@ are pinned to and the port they listen on. Nothing in here inspects audio to
 guess a language: `settings.model.language` is authoritative.
 """
 
-__version__ = "0.1.29"
+__version__ = "0.1.30"
 PROTOCOL_VERSION = 1
