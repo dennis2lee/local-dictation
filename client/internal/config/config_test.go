@@ -98,3 +98,64 @@ func TestStandalonePortsSurviveSaveAndLoad(t *testing.T) {
 			loaded.Local.KoreanPort, loaded.Local.EnglishPort)
 	}
 }
+
+// The gate on sentences nobody said, from the settings window's side.
+//
+// 0 is not off: it means the server's own default, which is on. Turning the
+// gate off is done by writing that into the server config by hand, because the
+// state it restores — a breath opening an utterance, and the decode of that
+// breath coming back as "감사합니다" — is not one to reach by leaving a field
+// empty.
+func TestTheMinimumSpeechDefaultIsTheServersOwn(t *testing.T) {
+	settings := localSettings()
+	if settings.Local.MinSpeechMs != 0 {
+		t.Errorf("MinSpeechMs defaults to %d; 0 is what defers to the server",
+			settings.Local.MinSpeechMs)
+	}
+	if err := settings.Validate(); err != nil {
+		t.Fatalf("the default should validate: %v", err)
+	}
+}
+
+func TestTheMinimumSpeechIsHeldToWhatAWordMeasures(t *testing.T) {
+	// The shortest real Korean word measures about 290 ms of detected speech,
+	// so a gate anywhere near the ceiling drops words the user said — and a
+	// negative one is not a duration at all.
+	for _, ms := range []int{-1, 1001, 5000} {
+		settings := localSettings()
+		settings.Local.MinSpeechMs = ms
+		err := settings.Validate()
+		if err == nil {
+			t.Errorf("a minimum speech of %d ms was accepted", ms)
+			continue
+		}
+		if !strings.Contains(err.Error(), "minimum speech") {
+			t.Errorf("the complaint about %d ms does not say what is wrong: %v", ms, err)
+		}
+	}
+
+	for _, ms := range []int{0, 120, 1000} {
+		settings := localSettings()
+		settings.Local.MinSpeechMs = ms
+		if err := settings.Validate(); err != nil {
+			t.Errorf("a minimum speech of %d ms was rejected: %v", ms, err)
+		}
+	}
+}
+
+func TestTheMinimumSpeechSurvivesSaveAndLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	settings := localSettings()
+	settings.Local.MinSpeechMs = 350
+	if err := settings.SaveTo(path); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if loaded.Local.MinSpeechMs != 350 {
+		t.Errorf("minimum speech did not round-trip: got %d, want 350", loaded.Local.MinSpeechMs)
+	}
+}

@@ -117,24 +117,7 @@ func (m *Manager) Ensure(ctx context.Context, language protocol.Language, progre
 		progress(fmt.Sprintf("Starting the %s server…", language))
 	}
 
-	port := settings.KoreanPort
-	if language == protocol.English {
-		port = settings.EnglishPort
-	}
-
-	server, err := Start(ctx, Options{
-		PythonPath:     python,
-		ServerDir:      serverDir,
-		ModelPath:      settings.ModelPath,
-		DraftModelPath: settings.DraftModelPath,
-		VadModelPath:   settings.VadModelPath,
-		Language:       language,
-		Port:           port,
-		CPUThreads:     settings.CPUThreads,
-		MinSpeechMs:    settings.MinSpeechMs,
-		StateDir:       settings.StateDir,
-		Backend:        settings.Backend,
-	})
+	server, err := Start(ctx, serverOptions(settings, language, python, serverDir))
 	if err != nil {
 		return nil, err
 	}
@@ -154,6 +137,32 @@ func (m *Manager) Ensure(ctx context.Context, language protocol.Language, progre
 	m.servers[language] = server
 	m.mu.Unlock()
 	return server, nil
+}
+
+// serverOptions is everything one language server is started with.
+//
+// Apart from Ensure so the hop from client settings to server options can be
+// checked without launching a Python process. A setting that stops here stops
+// silently: the server runs on its own default, the field the user filled in
+// still shows what they typed, and nothing anywhere reports a problem.
+func serverOptions(settings ManagerSettings, language protocol.Language, python, serverDir string) Options {
+	port := settings.KoreanPort
+	if language == protocol.English {
+		port = settings.EnglishPort
+	}
+	return Options{
+		PythonPath:     python,
+		ServerDir:      serverDir,
+		ModelPath:      settings.ModelPath,
+		DraftModelPath: settings.DraftModelPath,
+		VadModelPath:   settings.VadModelPath,
+		Language:       language,
+		Port:           port,
+		CPUThreads:     settings.CPUThreads,
+		MinSpeechMs:    settings.MinSpeechMs,
+		StateDir:       settings.StateDir,
+		Backend:        settings.Backend,
+	}
 }
 
 // Running reports the server for a language, if one is up.

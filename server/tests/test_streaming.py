@@ -14,7 +14,7 @@ from app.streaming.buffer import AudioBuffer, AudioFormatError
 from app.streaming.local_agreement import LocalAgreement, tokenize
 from app.streaming.session import StreamingSession
 from app.streaming.stitch import MAX_REPEAT_CHARACTERS, drop_repeated_prefix, repeated_prefix
-from app.streaming.vad import EnergyVad, SilenceTracker
+from app.streaming.vad import AlwaysSpeech, EnergyVad, SilenceTracker
 from tests.conftest import SAMPLE_RATE, silence, speech
 
 # -- buffer ----------------------------------------------------------------
@@ -982,3 +982,172 @@ async def test_trimming_does_not_change_the_text(executor):
             return composed(await drain(session))
 
     assert await transcript(True) == await transcript(False) != ""
+
+
+# -- what the tracker remembers ---------------------------------------------
+
+
+class DeafDetector:
+    """A detector that stops hearing, which is how a misconfigured one fails.
+
+    Silero fed the wrong window size does not raise. Every probability comes
+    back near zero, and the server sits there transcribing nothing while
+    someone talks. `name` is not "energy", so the tracker cross-checks it
+    against the signal level — which is the mechanism under test.
+    """
+
+    name = "silero"
+    frame_samples = 512
+
+    def __init__(self, *, hears_seconds: float = 0.0) -> None:
+        self._frames_left = int(hears_seconds * SAMPLE_RATE / self.frame_samples)
+
+    def is_speech(self, frame: bytes) -> bool:
+        if self._frames_left <= 0:
+            return False
+        self._frames_left -= 1
+        return True
+
+    def reset(self) -> None:
+        return None
+
+
+def test_an_utterance_does_not_inherit_the_last_ones_speech():
+    """`reset` runs at every utterance boundary, and the gate reads what it
+    leaves behind. A timeline that outlived its utterance would answer for
+    audio that is no longer in the buffer — the exact state the gate exists to
+    refuse, since what reaches the decoder then is a window holding nothing."""
+    tracker = SilenceTracker(EnergyVad(), cross_check=False)
+    tracker.push(speech(1.0))
+    assert tracker.speech_seconds_in_last(2.0) > 0
+
+    tracker.reset()
+    tracker.push(silence(0.2))
+
+    assert tracker.speech_seconds_in_last(2.0) == 0.0
+    assert tracker.speech_span_in_last(2.0) is None
+
+
+def test_the_timeline_does_not_grow_for_as_long_as_someone_talks():
+    """Per-frame history on a session that never ends is a leak unless it is
+    bounded. The bound is deliberately far longer than any window ever asked
+    about, so nothing that matters falls off the back of it."""
+    tracker = SilenceTracker(AlwaysSpeech(), cross_check=False)
+    pushed = int(SilenceTracker.HISTORY_SECONDS * 2)
+    for _ in range(pushed):
+        tracker.push(silence(1.0))  # AlwaysSpeech calls everything speech
+
+    assert tracker.speech_seconds_in_last(pushed * 2) == pytest.approx(
+        SilenceTracker.HISTORY_SECONDS, abs=0.1
+    )
+    # The utterance-wide counter is a different measure and is not bounded:
+    # it counts frames, and frames are what an utterance is made of.
+    assert tracker.speech_seconds == pytest.approx(pushed, abs=0.1)
+
+
+def test_a_detector_that_cannot_hear_is_replaced_rather_than_believed():
+    tracker = SilenceTracker(DeafDetector())
+    assert tracker.detector_name == "silero"
+
+    tracker.push(speech(SilenceTracker.DISAGREEMENT_LIMIT_SECONDS + 1.0))
+
+    assert tracker.fell_back, "the session stayed deaf for as long as it ran"
+    assert tracker.detector_name == "energy"
+
+
+def test_the_timeline_measures_real_time_across_a_detector_swap():
+    """Frames are remembered with the length they were classified at.
+
+    The fallback swaps a 512-sample detector for a 320-sample one part way
+    through, so from then on the history holds frames of two sizes. Assuming
+    one size would misreport everything recorded before the swap — and the
+    swap happens exactly when something is already wrong, which is the worst
+    moment for the numbers to start drifting too.
+    """
+    tracker = SilenceTracker(DeafDetector(hears_seconds=2.0))
+    tracker.push(speech(2.0))  # heard, in 32 ms frames
+    tracker.push(speech(5.0))  # deaf until the swap, then heard in 20 ms ones
+    tracker.push(speech(1.0))
+    assert tracker.fell_back
+
+    # Everything pushed was speech, so all of it should be measured as speech
+    # except the stretch the detector was allowed to be wrong about.
+    heard = 2.0 + 5.0 + 1.0 - SilenceTracker.DISAGREEMENT_LIMIT_SECONDS
+    assert tracker.speech_seconds_in_last(60.0) == pytest.approx(heard, abs=0.1)
+
+
+# -- what a decode is allowed to say ----------------------------------------
+
+
+class FixedTranscriber:
+    """Returns one prepared result and remembers what it was handed.
+
+    A real backend's timings are relative to the clip it was given, which is
+    the whole point: this one's are too, and they are wrong for the window
+    unless something puts them back.
+    """
+
+    name = "fixed"
+    language = "ko"
+
+    def __init__(self, result: TranscriptionResult) -> None:
+        self._result = result
+        self.prompt = ""
+        self.audio_seconds = 0.0
+
+    def warmup(self) -> None: ...
+
+    def close(self) -> None: ...
+
+    def transcribe(self, pcm, *, prompt: str = ""):
+        self.prompt = prompt
+        self.audio_seconds = len(pcm) / (SAMPLE_RATE * 2)
+        return self._result
+
+
+async def test_a_decode_answers_in_the_windows_own_frame(executor):
+    """The result of a decode has to describe the window, not the clip.
+
+    Two things happen to a window before it reaches the decoder — the silence
+    is cut off both ends, and a hypothesis that opens by repeating the prompt
+    has that repeat removed — and both leave the text and the timings saying
+    different things about where the audio starts. Everything downstream is
+    measured against the window: which audio may be dropped, where a committed
+    prefix ends. Timings from the shorter clip cut in the wrong place, and the
+    cost of cutting in the wrong place is text lost or typed twice at every
+    trim boundary.
+
+    Tested at `_decode` rather than through a session because this is the one
+    place where the window's frame of reference is established; reaching it
+    through a whole session would assert on it only by implication.
+    """
+    decoded = TranscriptionResult(
+        text="오늘 회의를 시작합니다",
+        words=(
+            Word("오늘 ", 0.0, 0.3),
+            Word("회의를 ", 0.3, 0.8),
+            Word("시작합니다", 0.8, 1.4),
+        ),
+        segment_ends=(1.4,),
+    )
+    backend = FixedTranscriber(decoded)
+    session = StreamingSession(
+        session_id="s-1", transcriber=backend, settings=PATIENT, executor=executor
+    )
+    session.push_audio(silence(1.0))
+    session.push_audio(speech(1.5))
+    session._prompt = "오늘 "
+
+    result = await session._decode(session._buffer.snapshot(), backend)
+    assert result is not None
+
+    # The silence went, so the decoder saw a fraction of what the buffer holds.
+    assert backend.audio_seconds < 2.0
+    # The prompt echo went with it, text and words together.
+    assert result.text == "회의를 시작합니다"
+    assert result.words[0].text.strip() == "회의를"
+    # And what is left is in the window's frame: speech starts a second in, so
+    # a word the decoder timed at 0.3 s sits at about 1.1 s of the window.
+    offset = 1.0 - 0.2  # the pad kept in front of the speech
+    assert result.words[0].start == pytest.approx(0.3 + offset, abs=0.1)
+    assert result.segment_ends[0] == pytest.approx(1.4 + offset, abs=0.1)

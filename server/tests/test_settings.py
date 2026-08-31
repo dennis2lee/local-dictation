@@ -59,6 +59,11 @@ def test_env_overrides_yaml_and_is_coerced(tmp_path):
         "limits: {max_sessions: 0}",
         "streaming: {chunk_ms: 10}",
         "streaming: {agreement_window: 1}",
+        # The gate on sentences nobody said. Above the shortest real
+        # word it drops words that were said; below zero it is not a
+        # duration at all.
+        "streaming: {min_speech_ms: 1200}",
+        "streaming: {min_speech_ms: -1}",
         "security: {tls_certificate: /tmp/a.crt}",  # key missing
         "security: {require_client_certificate: true}",  # no CA, no TLS
     ],
